@@ -1,0 +1,124 @@
+{
+  "time": {
+	"real_seconds_per_game_hour": 60.0,
+	"start_hour": 7.5,
+	"start_day": 1,
+	"season": "Ранняя осень"
+  },
+  "player": {
+	"walk_speed": 95.0,
+	"run_speed": 165.0,
+	"crouch_speed": 48.0,
+	"dash_speed": 260.0,
+	"reach_cells": 4.5
+  },
+  "survival": {
+	"max_hp": 100.0,
+	"max_weight_kg": 30.0,
+	"hunger_per_hour": 4.0,
+	"thirst_per_hour": 5.0,
+	"sleep_per_hour": 4.0,
+	"stress_near_titan_per_sec": 3.5,
+	"day_temp_c": 14.0,
+	"night_temp_c": 2.0
+  },
+  "colony": {
+	"starting_survivors": [
+	  { "name": "Анна", "prof": "Врач", "trait": "Целитель", "role": "cook_med", "recruited": true, "x": -11, "y": -9 },
+	  { "name": "Борн", "prof": "Плотник", "trait": "Мастер", "role": "gather", "recruited": false, "x": 10, "y": -8 },
+	  { "name": "Ворон", "prof": "Солдат", "trait": "Смелый", "role": "guard", "recruited": false, "x": 24, "y": -2 },
+	  { "name": "Ева", "prof": "Охотник", "trait": "Оптимист", "role": "gather", "recruited": false, "x": -11, "y": 10 }
+	]
+  },
+  "web_gear": {
+	"max_range_cells": 18.0,
+	"pull_accel": 340.0,
+	"gas_boost_accel": 520.0,
+	"max_swing_speed": 330.0,
+	"gas_max": 100.0,
+	"gas_boost_cost_per_sec": 14.0,
+	"gas_reel_cost_per_sec": 5.0,
+	"blade_base_damage": 35.0,
+	"blade_max_durability": 100.0,
+	"spare_blades": 4,
+	"rope_max_durability": 100.0,
+	"focus_max": 100.0
+  },
+  "titans": {
+	"wanderer": {
+	  "name": "Бродяга",
+	  "nape_hp": 40.0,
+	  "speed": 46.0,
+	  "chase_speed": 74.0,
+	  "vision_cells_day": 14.0,
+	  "vision_cells_night": 2.5,
+	  "vision_angle_deg": 90.0,
+	  "grab_time_sec": 2.0
+	},
+	"crawler": {
+	  "name": "Ползун",
+	  "nape_hp": 35.0,
+	  "speed": 65.0,
+	  "chase_speed": 98.0,
+	  "vision_cells_day": 10.0,
+	  "vision_cells_night": 3.5,
+	  "vision_angle_deg": 120.0,
+	  "grab_time_sec": 1.5
+	}
+  },
+  "blocks": {
+	"1": { "id": 1, "name": "Деревянная стена", "hp": 40, "span": 4, "anchor": false, "solid": true, "hookable": true, "color": "#855e3b", "top_color": "#a3764d", "drop": "wood", "cost_item": "wood" },
+	"2": { "id": 2, "name": "Кирпичная стена", "hp": 90, "span": 6, "anchor": false, "solid": true, "hookable": true, "color": "#7a3b30", "top_color": "#9e5244", "drop": "stone", "cost_item": "stone" },
+	"3": { "id": 3, "name": "Каменная колонна (Опора)", "hp": 160, "span": 10, "anchor": true, "solid": true, "hookable": true, "color": "#5a6069", "top_color": "#8892a0", "drop": "stone", "cost_item": "stone" },
+	"4": { "id": 4, "name": "Остов-камень (Опора)", "hp": 400, "span": 14, "anchor": true, "solid": true, "hookable": true, "color": "#2d3540", "top_color": "#455161", "drop": "core_stone", "cost_item": "core_stone" },
+	"5": { "id": 5, "name": "Пол и Крыша (Тишина)", "hp": 25, "span": 8, "anchor": false, "solid": false, "hookable": false, "color": "#6e5036", "top_color": "#6e5036", "drop": "wood", "cost_item": "wood" },
+	"6": { "id": 6, "name": "Усиленная дверь", "hp": 80, "span": 5, "anchor": false, "solid": true, "is_door": true, "hookable": false, "color": "#6b4423", "top_color": "#c28d4e", "drop": "wood", "cost_item": "wood" },
+	"7": { "id": 7, "name": "Колокол-приманка", "hp": 50, "span": 4, "anchor": true, "solid": true, "is_bell": true, "hookable": true, "color": "#8c7830", "top_color": "#ffd54f", "drop": "scrap", "cost_item": "scrap" },
+	"8": { "id": 8, "name": "Дерево-Колонна", "hp": 140, "span": 8, "anchor": true, "solid": true, "hookable": true, "color": "#3b2d22", "top_color": "#2f5c34", "drop": "wood", "cost_item": "wood" }
+  },
+  "items": {
+	"wood": { "name": "Дрова", "weight": 0.8, "type": "mat" },
+	"stone": { "name": "Камень", "weight": 1.2, "type": "mat" },
+	"core_stone": { "name": "Остов-камень (подавляет Корень)", "weight": 1.8, "type": "mat" },
+	"scrap": { "name": "Железный лом", "weight": 1.5, "type": "mat" },
+	"cloth": { "name": "Ткань", "weight": 0.3, "type": "mat" },
+	"herbs": { "name": "Лечебные травы", "weight": 0.2, "type": "mat" },
+	"ash": { "name": "Пепел титана", "weight": 0.4, "type": "mat" },
+	"raw_meat": { "name": "Сырое мясо (пахнет кровью!)", "weight": 0.7, "type": "food", "food": 18, "stress": 5 },
+	"cooked_meat": { "name": "Жаркое на углях", "weight": 0.6, "type": "food", "food": 42, "warmth": 1.0, "stress": -12 },
+	"canned_food": { "name": "Консервы", "weight": 0.8, "type": "food", "food": 38, "water": 10, "stress": -5 },
+	"hot_soup": { "name": "Горячая похлёбка", "weight": 0.9, "type": "food", "food": 48, "water": 35, "warmth": 2.2, "stress": -20 },
+	"dirty_water": { "name": "Мутная вода", "weight": 0.6, "type": "drink", "water": 28, "hp": -8 },
+	"clean_water": { "name": "Фляга чистой воды", "weight": 0.6, "type": "drink", "water": 48, "stress": -5 },
+	"herbal_tea": { "name": "Горячий травяной чай", "weight": 0.5, "type": "drink", "water": 40, "warmth": 2.5, "stress": -22, "hp": 8 },
+	"bandage": { "name": "Стерильный бинт", "weight": 0.2, "type": "med", "hp": 22, "stop_bleed": true },
+	"poultice": { "name": "Травяной компресс", "weight": 0.3, "type": "med", "hp": 38, "stop_bleed": true, "stress": -8 },
+	"grey_infusion": { "name": "Серый настой (лечит Лихорадку Корня)", "weight": 0.4, "type": "med", "hp": 25, "cure_root": true, "stress": -15 },
+	"campfire_kit": { "name": "Набор для костра", "weight": 2.5, "type": "placeable", "place": "campfire" },
+	"workbench_kit": { "name": "Инструменты верстака", "weight": 4.0, "type": "placeable", "place": "workbench" },
+	"spike_trap_kit": { "name": "Ловушка с кольями", "weight": 3.0, "type": "placeable", "place": "spike_trap" },
+	"bedroll": { "name": "Тёплый спальник", "weight": 2.0, "type": "gear", "warmth_bonus": 3.5 },
+	"warm_coat": { "name": "Утеплённая куртка", "weight": 2.2, "type": "gear", "warmth_bonus": 6.0 },
+	"charcoal_mask": { "name": "Маска с угольным фильтром", "weight": 0.8, "type": "gear", "spore_resist": true },
+	"smoke_bomb": { "name": "Дымовая шашка", "weight": 0.5, "type": "tool", "smoke": true }
+  },
+  "recipes": [
+	{ "id": "r_campfire", "name": "Набор для костра", "out": "campfire_kit", "count": 1, "station": "none", "cost": { "wood": 3, "stone": 2 } },
+	{ "id": "r_workbench", "name": "Инструменты верстака", "out": "workbench_kit", "count": 1, "station": "none", "cost": { "wood": 4, "stone": 2, "scrap": 1 } },
+	{ "id": "r_trap", "name": "Ловушка с кольями", "out": "spike_trap_kit", "count": 1, "station": "workbench", "cost": { "wood": 3, "scrap": 1 } },
+	{ "id": "r_mask", "name": "Угольная маска (защита от спор)", "out": "charcoal_mask", "count": 1, "station": "workbench", "cost": { "cloth": 2, "wood": 2 } },
+	{ "id": "r_grey_inf", "name": "Серый настой (против Корня)", "out": "grey_infusion", "count": 1, "station": "campfire", "cost": { "core_stone": 1, "herbs": 2, "clean_water": 1 } },
+	{ "id": "r_bandage", "name": "Стерильный бинт", "out": "bandage", "count": 1, "station": "none", "cost": { "cloth": 2 } },
+	{ "id": "r_poultice", "name": "Травяной компресс", "out": "poultice", "count": 1, "station": "none", "cost": { "cloth": 1, "herbs": 2 } },
+	{ "id": "r_clean_water", "name": "Вскипятить воду", "out": "clean_water", "count": 1, "station": "campfire", "cost": { "dirty_water": 1, "wood": 1 } },
+	{ "id": "r_cooked_meat", "name": "Пожарить мясо", "out": "cooked_meat", "count": 1, "station": "campfire", "cost": { "raw_meat": 1, "wood": 1 } },
+	{ "id": "r_hot_soup", "name": "Горячая похлёбка", "out": "hot_soup", "count": 1, "station": "campfire", "cost": { "raw_meat": 1, "clean_water": 1, "herbs": 1 } },
+	{ "id": "r_tea", "name": "Травяной чай", "out": "herbal_tea", "count": 1, "station": "campfire", "cost": { "clean_water": 1, "herbs": 2 } },
+	{ "id": "r_blades", "name": "Выковать пару клинков (+1)", "out": "_blade_pair", "count": 1, "station": "workbench", "cost": { "scrap": 2, "wood": 1 } },
+	{ "id": "r_rope_fix", "name": "Укрепить тросы Паутины", "out": "_rope_repair", "count": 1, "station": "workbench", "cost": { "cloth": 2, "scrap": 1 } },
+	{ "id": "r_gas_synth", "name": "Выгнать светильный газ (+60%)", "out": "_gas_refill", "count": 1, "station": "campfire", "cost": { "wood": 2, "ash": 1 } },
+	{ "id": "r_coat", "name": "Утеплённая куртка (+тепло)", "out": "warm_coat", "count": 1, "station": "workbench", "cost": { "cloth": 4, "scrap": 1 } },
+	{ "id": "r_bedroll", "name": "Тёплый спальник", "weight": 2.0, "out": "bedroll", "count": 1, "station": "workbench", "cost": { "cloth": 3, "wood": 1 } },
+	{ "id": "r_smoke", "name": "Дымовая шашка (из пепла)", "out": "smoke_bomb", "count": 1, "station": "workbench", "cost": { "ash": 1, "cloth": 1 } }
+  ]
+}
