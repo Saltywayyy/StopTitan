@@ -1,9 +1,15 @@
+@warning_ignore("integer_division")
 class_name PlayerController
 extends CharacterBody2D
 
-var walk_speed: float = 90.0
-var run_speed: float = 155.0
-var crouch_speed: float = 48.0
+const GRAB_ESCAPE_TAPS_REQUIRED: int = 4
+const GRAB_DAMAGE_PER_SEC: float = 22.0
+
+var walk_speed: float = 62.0
+var run_speed: float = 105.0
+var crouch_speed: float = 36.0
+var move_speed_mult: float = 0.85
+var slash_reach_cells: float = 1.55
 
 var max_range_px: float = 288.0
 var pull_accel: float = 340.0
@@ -31,6 +37,7 @@ var is_crouching: bool = false
 var is_running: bool = false
 var current_noise_radius: float = 0.0
 var look_direction: Vector2 = Vector2.DOWN
+var facing_left: bool = false
 var z_height: float = 0.0
 var z_velocity: float = 0.0
 var torch_lit: bool = true
@@ -44,14 +51,15 @@ var grabbing_titan: Node2D = null
 var grab_timer: float = 0.0
 var grab_escape_progress: int = 0
 var is_dead: bool = false
+var _escape_key_was_down: bool = false
 
 var world_ref: Node2D
 var surv: SurvivalSystem
 
-# Попиксельные кадры героя (стоя и в шаге)
-var tex_idle: ImageTexture
-var tex_walk1: ImageTexture
-var tex_walk2: ImageTexture
+var tex_idle: Texture2D
+var tex_walk1: Texture2D
+var tex_walk2: Texture2D
+var using_external_hero_png: bool = false
 
 var mobile_move_vec: Vector2 = Vector2.ZERO
 var mobile_jump_queued: bool = false
@@ -73,53 +81,53 @@ func _ready() -> void:
 		surv = SurvivalSystem.new()
 		add_child(surv)
 
-	tex_idle = _build_hero_sprite(0)
-	tex_walk1 = _build_hero_sprite(1)
-	tex_walk2 = _build_hero_sprite(2)
+	var fb_idle := _build_hero_sprite(0)
+	var fb_w1 := _build_hero_sprite(1)
+	var fb_w2 := _build_hero_sprite(2)
+	using_external_hero_png = ArtLoader.has_file("hero")
+	var hero_frames: Array[Texture2D] = ArtLoader.get_frames("hero", [fb_idle, fb_w1, fb_w2])
+	tex_idle = hero_frames[0] if hero_frames.size() > 0 else fb_idle
+	tex_walk1 = hero_frames[1] if hero_frames.size() > 1 else tex_idle
+	tex_walk2 = hero_frames[2] if hero_frames.size() > 2 else tex_walk1
 
-# Попиксельная сборка спрайта героя 16x24 (строгая сетка, 1px контур!)
 func _build_hero_sprite(frame: int) -> ImageTexture:
 	var img := Image.create(16, 24, false, Image.FORMAT_RGBA8)
-	var c_out := Color("#0f1318")
-	var c_skin := Color("#e0b48c")
-	var c_hair := Color("#261a14")
-	var c_coat := Color("#26382e")
-	var c_vest := Color("#784d30")
-	var c_belt := Color("#d4a045")
-	var c_pants := Color("#242a34")
-	var c_boot := Color("#1a1410")
+	var c_out := Color("#171412")
+	var c_skin := Color("#ebbf94")
+	var c_skin_sh := Color("#c9986d")
+	var c_hair := Color("#241811")
+	var c_cloak := Color("#2f4526")
+	var c_cloak_hl := Color("#4d6d37")
+	var c_tunic := Color("#9a6b3f")
+	var c_scarf := Color("#a0583a")
+	var c_belt := Color("#ffcc66")
+	var c_pants := Color("#2b2f36")
+	var c_boot := Color("#171412")
 
-	# Тень у ног
 	for x in range(4, 12):
-		img.set_pixel(x, 22, Color(0, 0, 0, 0.45))
-		img.set_pixel(x, 23, Color(0, 0, 0, 0.3))
-
-	# Голова и волосы (y: 2..10, x: 4..11)
-	for x in range(4, 12):
-		for y in range(2, 11):
-			if x == 4 or x == 11 or y == 2 or y == 10:
+		for y in range(1, 11):
+			if x == 4 or x == 11 or y == 1 or y == 10:
 				img.set_pixel(x, y, c_out)
-			elif y <= 5 or x == 5 or x == 10:
+			elif y <= 4 or x == 5 or (x == 10 and y <= 6):
 				img.set_pixel(x, y, c_hair)
 			else:
-				img.set_pixel(x, y, c_skin)
-	# Глаза
-	img.set_pixel(6, 7, c_out)
-	img.set_pixel(9, 7, c_out)
+				img.set_pixel(x, y, c_skin if y < 9 else c_skin_sh)
+	img.set_pixel(6, 6, c_out)
+	img.set_pixel(9, 6, c_out)
 
-	# Торс, плащ и ремень (y: 11..17, x: 3..12)
-	for x in range(3, 13):
-		for y in range(11, 18):
-			if x == 3 or x == 12 or y == 17:
+	for x in range(2, 14):
+		for y in range(10, 18):
+			if x == 2 or x == 13 or y == 17:
 				img.set_pixel(x, y, c_out)
-			elif y == 16:
+			elif y == 10 or (y == 11 and x >= 5 and x <= 10):
+				img.set_pixel(x, y, c_scarf)
+			elif y == 15:
 				img.set_pixel(x, y, c_belt if (x == 7 or x == 8) else c_boot)
 			elif x >= 6 and x <= 9:
-				img.set_pixel(x, y, c_vest)
+				img.set_pixel(x, y, c_tunic)
 			else:
-				img.set_pixel(x, y, c_coat)
+				img.set_pixel(x, y, c_cloak_hl if x <= 4 else c_cloak)
 
-	# Ноги с покадровым шагом (y: 18..22)
 	var l_off: int = -1 if frame == 1 else (1 if frame == 2 else 0)
 	var r_off: int = 1 if frame == 1 else (-1 if frame == 2 else 0)
 	for x in range(4, 8):
@@ -131,13 +139,10 @@ func _build_hero_sprite(frame: int) -> ImageTexture:
 			if y >= 0 and y < 24:
 				img.set_pixel(x, y, c_out if (x == 8 or x == 11 or y == 21 + r_off) else (c_boot if y >= 20 else c_pants))
 
-	# Пиксельный факел в правой руке
 	img.set_pixel(13, 14, c_out)
-	img.set_pixel(13, 13, Color("#704828"))
-	img.set_pixel(14, 12, Color("#704828"))
-	img.set_pixel(14, 11, Color("#ff6d1c"))
-	img.set_pixel(14, 10, Color("#ffe066"))
-	img.set_pixel(13, 11, Color("#ff9800"))
+	img.set_pixel(13, 13, Color("#7a5230"))
+	img.set_pixel(14, 12, Color("#7a5230"))
+	img.set_pixel(14, 11, Color("#5b3a22"))
 
 	return ImageTexture.create_from_image(img)
 
@@ -150,9 +155,10 @@ func apply_config(full_cfg: Dictionary) -> void:
 	var p_cfg: Dictionary = full_cfg.get("player", {})
 	var w_cfg: Dictionary = full_cfg.get("web_gear", {})
 
-	walk_speed = float(p_cfg.get("walk_speed", 90.0))
-	run_speed = float(p_cfg.get("run_speed", 155.0))
-	crouch_speed = float(p_cfg.get("crouch_speed", 48.0))
+	walk_speed = float(p_cfg.get("walk_speed", 80.0)) * 0.72
+	run_speed = float(p_cfg.get("run_speed", 140.0)) * 0.70
+	crouch_speed = float(p_cfg.get("crouch_speed", 45.0)) * 0.75
+	slash_reach_cells = float(p_cfg.get("slash_reach_cells", 1.55))
 
 	if not w_cfg.is_empty():
 		max_range_px = float(w_cfg.get("max_range_cells", 18.0)) * 16.0
@@ -212,6 +218,8 @@ func fire_hook(is_left: bool, target_world_pos: Vector2) -> void:
 		else:
 			hook_right_active = true
 			hook_right_pos = anchor
+		if absf(dir.x) > 0.15:
+			facing_left = (dir.x < 0.0)
 		rope_durability = maxf(0.0, rope_durability - 0.8)
 		current_noise_radius = maxf(current_noise_radius, 10.0)
 		if z_height < 6.0:
@@ -243,26 +251,69 @@ func refill_at_station() -> void:
 	spare_blades = max(spare_blades, 4)
 	focus = 100.0
 
+# ПУНКТ 1.1: Захват титаном, быстрое вырывание и честная смерть с освобождением из лапы титана
 func on_grabbed_by_titan(titan: Node2D) -> void:
+	if is_dead:
+		return
 	surv.is_sleeping = false
 	is_grabbed = true
 	grabbing_titan = titan
-	grab_timer = 2.0
+	grab_timer = 3.2
 	grab_escape_progress = 0
-	surv.hp = maxf(5.0, surv.hp - 18.0)
-	surv.bleeding_rate = 5.0
+	_escape_key_was_down = false
+	surv.hp = maxf(0.0, surv.hp - 16.0)
+	surv.bleeding_rate = 4.5
 	surv.stress = minf(100.0, surv.stress + 28.0)
 	release_hooks()
 	if world_ref and world_ref.has_method("play_sfx"):
 		world_ref.play_sfx("roar")
+	if surv.hp <= 0.0:
+		_trigger_player_death()
+
+func _trigger_player_death() -> void:
+	if is_dead:
+		return
+	is_dead = true
+	surv.hp = 0.0
+	surv.is_sleeping = false
+	release_hooks()
+	velocity = Vector2.ZERO
+	z_height = 0.0
+	z_velocity = 0.0
+	if is_grabbed:
+		is_grabbed = false
+		if is_instance_valid(grabbing_titan) and grabbing_titan.has_method("on_player_died_in_grab"):
+			grabbing_titan.on_player_died_in_grab()
+		grabbing_titan = null
+	if world_ref and world_ref.has_method("on_player_died"):
+		world_ref.on_player_died()
+
+func respawn_at(spawn_world_pos: Vector2) -> void:
+	is_dead = false
+	is_grabbed = false
+	grabbing_titan = null
+	grab_timer = 0.0
+	grab_escape_progress = 0
+	surv.hp = surv.max_hp
+	surv.hunger = maxf(surv.hunger, 75.0)
+	surv.thirst = maxf(surv.thirst, 75.0)
+	surv.bleeding_rate = 0.0
+	surv.stress = 15.0
+	surv.is_sleeping = false
+	blade_durability = 100.0
+	gas = gas_max
+	global_position = spawn_world_pos
+	velocity = Vector2.ZERO
+	z_height = 0.0
+	z_velocity = 0.0
+	release_hooks()
 
 func _physics_process(delta: float) -> void:
 	if surv.hp <= 0.0 and not is_dead:
-		is_dead = true
+		_trigger_player_death()
 
 	if is_dead:
 		velocity = Vector2.ZERO
-		queue_redraw()
 		return
 
 	if surv.is_sleeping:
@@ -270,31 +321,44 @@ func _physics_process(delta: float) -> void:
 		current_noise_radius = 0.0
 		if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_D) or mobile_move_vec.length() > 0.1:
 			surv.is_sleeping = false
-		queue_redraw()
 		return
 
 	if is_grabbed:
-		if not is_instance_valid(grabbing_titan):
+		if not is_instance_valid(grabbing_titan) or grabbing_titan.state == TitanEntity.State.DYING:
 			is_grabbed = false
+			grabbing_titan = null
 		else:
-			global_position = grabbing_titan.global_position + Vector2(0, 8)
+			var hand_side: float = -10.0 if grabbing_titan.facing.x < 0.0 else 10.0
+			global_position = grabbing_titan.global_position + Vector2(hand_side, -18.0)
+			z_height = 14.0
 			grab_timer -= delta
-			if Input.is_action_just_pressed("ui_accept") or Input.is_key_pressed(KEY_F) or mobile_jump_queued or mobile_attack_queued:
-				mobile_jump_queued = false
-				mobile_attack_queued = false
+			surv.hp = maxf(0.0, surv.hp - GRAB_DAMAGE_PER_SEC * delta)
+
+			var key_down_now: bool = Input.is_key_pressed(KEY_F) or Input.is_key_pressed(KEY_SPACE)
+			var tap_escape: bool = (key_down_now and not _escape_key_was_down) or mobile_jump_queued or mobile_attack_queued
+			_escape_key_was_down = key_down_now
+			mobile_jump_queued = false
+			mobile_attack_queued = false
+
+			if tap_escape:
 				grab_escape_progress += 1
-				if grab_escape_progress >= 2 and blade_durability > 0.0:
-					blade_durability = maxf(0.0, blade_durability - 20.0)
+				if world_ref and world_ref.has_method("play_sfx"):
+					world_ref.play_sfx("blade")
+				if grab_escape_progress >= GRAB_ESCAPE_TAPS_REQUIRED:
+					blade_durability = maxf(0.0, blade_durability - 16.0)
+					var escaped_from: Node2D = grabbing_titan
 					is_grabbed = false
-					if grabbing_titan.has_method("release_grab_stunned"):
-						grabbing_titan.release_grab_stunned()
-					velocity = -grabbing_titan.facing * 220.0
-					z_velocity = 140.0
+					grabbing_titan = null
+					if is_instance_valid(escaped_from) and escaped_from.has_method("release_grab_stunned"):
+						escaped_from.release_grab_stunned()
+						velocity = -escaped_from.facing.normalized() * 210.0
+					z_velocity = 135.0
 					if world_ref and world_ref.has_method("play_sfx"):
 						world_ref.play_sfx("hit")
-			if grab_timer <= 0.0 and is_grabbed:
-				is_dead = true
-		queue_redraw()
+					return
+
+			if surv.hp <= 0.0 or grab_timer <= 0.0:
+				_trigger_player_death()
 		return
 
 	var input_vec := Vector2.ZERO
@@ -307,11 +371,18 @@ func _physics_process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
 		input_vec.y += 1.0
 
-	var move_vec: Vector2 = input_vec + mobile_move_vec
+	var joy_curved := Vector2.ZERO
+	if mobile_move_vec.length() > 0.01:
+		var j_len: float = clampf(mobile_move_vec.length(), 0.0, 1.0)
+		joy_curved = mobile_move_vec.normalized() * pow(j_len, 1.35)
+
+	var move_vec: Vector2 = input_vec + joy_curved
 	if move_vec.length() > 1.0:
 		move_vec = move_vec.normalized()
-	if move_vec.length() > 0.1:
+	if move_vec.length() > 0.08:
 		look_direction = move_vec.normalized()
+		if absf(look_direction.x) > 0.12:
+			facing_left = (look_direction.x < 0.0)
 
 	if Input.is_key_pressed(KEY_Q) and not hook_left_active:
 		fire_hook(true, get_global_mouse_position())
@@ -359,13 +430,14 @@ func _physics_process(delta: float) -> void:
 	else:
 		is_crouching = Input.is_key_pressed(KEY_CTRL) or mobile_crouch_toggle
 		is_running = (Input.is_key_pressed(KEY_SHIFT) or mobile_run_toggle) and not is_crouching
-		var target_speed: float = crouch_speed if is_crouching else (run_speed if is_running else walk_speed)
-		if move_vec.length() > 0.05:
-			velocity = velocity.move_toward(move_vec * target_speed, 650.0 * delta)
-			walk_anim_phase += delta * (11.0 if is_running else 7.0)
+		var base_spd: float = crouch_speed if is_crouching else (run_speed if is_running else walk_speed)
+		var target_speed: float = base_spd * move_speed_mult
+		if move_vec.length() > 0.04:
+			velocity = velocity.move_toward(move_vec * target_speed, 480.0 * delta)
+			walk_anim_phase += delta * (8.5 if is_running else 5.5) * move_vec.length()
 			current_noise_radius = 1.5 if is_crouching else (8.0 if is_running else 3.0)
 		else:
-			velocity = velocity.move_toward(Vector2.ZERO, 800.0 * delta)
+			velocity = velocity.move_toward(Vector2.ZERO, 640.0 * delta)
 			walk_anim_phase = 0.0
 			current_noise_radius = move_toward(current_noise_radius, 0.0, 15.0 * delta)
 
@@ -383,31 +455,86 @@ func _physics_process(delta: float) -> void:
 		_perform_blade_strike()
 
 	move_and_slide()
-	queue_redraw()
 
 func _perform_blade_strike() -> void:
-	if blade_durability <= 0.0:
-		return
-	attack_anim_timer = 0.2
-	if world_ref and world_ref.has_method("play_sfx"):
-		world_ref.play_sfx("blade")
-	if world_ref and world_ref.has_method("player_slash_attack"):
+	attack_anim_timer = 0.22
+	var hit_any_titan: bool = false
+
+	if blade_durability > 0.0 and world_ref and world_ref.has_method("player_slash_attack"):
 		var res: Dictionary = world_ref.player_slash_attack(global_position, look_direction, velocity.length(), blade_dmg, max_swing_speed)
 		if bool(res.get("hit", false)):
-			blade_durability = maxf(0.0, blade_durability - 14.0)
+			hit_any_titan = true
+			blade_durability = maxf(0.0, blade_durability - 10.0)
 			if bool(res.get("killed", false)):
 				surv.add_item("ash", 1)
 
-func _draw() -> void:
-	var y_off: int = -int(round(z_height))
-	if hook_left_active:
-		draw_line(Vector2(-4, -10 + y_off), hook_left_pos - global_position, Color("#8ea0b2"), 1.0)
-	if hook_right_active:
-		draw_line(Vector2(4, -10 + y_off), hook_right_pos - global_position, Color("#8ea0b2"), 1.0)
+	if not hit_any_titan and world_ref and world_ref.has_method("player_harvest_nearby"):
+		var harvested: bool = world_ref.player_harvest_nearby(global_position, look_direction)
+		if harvested:
+			return
 
-	var cur_tex: ImageTexture = tex_idle
-	if velocity.length() > 10.0:
+	if not hit_any_titan and world_ref and world_ref.has_method("play_sfx"):
+		world_ref.play_sfx("blade")
+
+func get_current_frame_texture() -> Texture2D:
+	var cur_tex: Texture2D = tex_idle
+	if velocity.length() > 8.0 and not is_dead:
 		cur_tex = tex_walk1 if int(floor(walk_anim_phase)) % 2 == 0 else tex_walk2
+	return cur_tex
 
+# ПУНКТ 1.3 и 1.4: Отрисовка героя вызывается из единого Y-Sort конвейера в main._draw()
+func draw_entity_onto(canvas: CanvasItem) -> void:
+	var p: Vector2 = global_position
+	Phase1Visuals.draw_soft_shadow(canvas, p + Vector2(2, 0), Vector2(16, 8), 0.52)
+
+	var bob_px: int = -1 if (velocity.length() > 8.0 and not is_dead and int(floor(walk_anim_phase * 2.0)) % 2 == 1) else 0
+	var y_off: int = -int(round(z_height)) + bob_px
+	if hook_left_active:
+		canvas.draw_line(p + Vector2(-4, -10 + y_off), hook_left_pos, Color("#9aa8b8"), 1.2)
+	if hook_right_active:
+		canvas.draw_line(p + Vector2(4, -10 + y_off), hook_right_pos, Color("#9aa8b8"), 1.2)
+
+	if is_gas_boosting:
+		var trail := -velocity.normalized() * 9.0
+		canvas.draw_rect(Rect2(p + trail + Vector2(-2, -10 + y_off), Vector2(4, 4)), Color(0.9, 0.95, 1.0, 0.75), true)
+
+	var cur_tex: Texture2D = get_current_frame_texture()
 	if cur_tex != null:
-		draw_texture(cur_tex, Vector2(-8, -22 + y_off))
+		var hero_sz: Vector2 = ArtLoader.get_frame_size("hero")
+		var draw_w: float = -hero_sz.x if facing_left else hero_sz.x
+		var draw_x: float = hero_sz.x * 0.5 if facing_left else -hero_sz.x * 0.5
+		var mod_col := Color(0.55, 0.25, 0.25, 0.85) if is_dead else Color.WHITE
+		canvas.draw_texture_rect(cur_tex, Rect2(p + Vector2(draw_x, -22 + y_off), Vector2(draw_w, hero_sz.y)), false, mod_col)
+
+	if torch_lit and not surv.is_sleeping and not is_dead:
+		var fl: int = int(Time.get_ticks_msec() / 120) % 2
+		var tx: float = -7.0 if facing_left else 5.0
+		canvas.draw_rect(Rect2(p + Vector2(tx, -13 + y_off - fl), Vector2(3, 3)), Color("#ff9429"), true)
+		canvas.draw_rect(Rect2(p + Vector2(tx + (0.0 if facing_left else 1.0), -12 + y_off - fl), Vector2(2, 2)), Color("#fff3b0"), true)
+
+	if attack_anim_timer > 0.0 and not is_dead:
+		var slash_pos: Vector2 = p + look_direction.normalized() * 13.0 + Vector2(0, -10 + y_off)
+		var perp := Vector2(-look_direction.y, look_direction.x).normalized() * 9.0
+		canvas.draw_line(slash_pos - perp, slash_pos + perp, Color("#e6f2ff"), 2.5)
+		canvas.draw_line(slash_pos - perp * 0.7 + look_direction * 3.0, slash_pos + perp * 0.7 + look_direction * 3.0, Color("#ffd166"), 1.5)
+
+	# Индикатор сопротивления в захвате титана
+	if is_grabbed and not is_dead:
+		var ratio: float = clampf(float(grab_escape_progress) / float(GRAB_ESCAPE_TAPS_REQUIRED), 0.0, 1.0)
+		var bar_pos: Vector2 = p + Vector2(-18, -32 + y_off)
+		canvas.draw_rect(Rect2(bar_pos, Vector2(36, 5)), Color("#141210"), true)
+		canvas.draw_rect(Rect2(bar_pos + Vector2(1, 1), Vector2(34.0 * ratio, 3)), Color("#ffcc4d"), true)
+		var font: Font = ThemeDB.fallback_font
+		canvas.draw_string(font, bar_pos + Vector2(-18, -3), "ЖМИ УДАР! (%d/%d)" % [grab_escape_progress, GRAB_ESCAPE_TAPS_REQUIRED], HORIZONTAL_ALIGNMENT_CENTER, 72, 9, Color("#fff3b0"))
+
+# ПУНКТ 1.4: Тонкий чёрный контур по альфе спрайта (когда герой перекрыт деревом, стеной или башней)
+func draw_occluded_silhouette(canvas: CanvasItem, sil_Tex: Texture2D) -> void:
+	if sil_Tex == null:
+		return
+	var p: Vector2 = global_position
+	var bob_px: int = -1 if (velocity.length() > 8.0 and not is_dead and int(floor(walk_anim_phase * 2.0)) % 2 == 1) else 0
+	var y_off: int = -int(round(z_height)) + bob_px
+	var hero_sz: Vector2 = ArtLoader.get_frame_size("hero")
+	var draw_w: float = -hero_sz.x if facing_left else hero_sz.x
+	var draw_x: float = hero_sz.x * 0.5 if facing_left else -hero_sz.x * 0.5
+	canvas.draw_texture_rect(sil_Tex, Rect2(p + Vector2(draw_x, -22 + y_off), Vector2(draw_w, hero_sz.y)), false)

@@ -1,3 +1,4 @@
+@warning_ignore("integer_division")
 extends Node2D
 
 const CELL_SIZE: int = 16
@@ -6,7 +7,7 @@ const MAP_RADIUS: int = 65
 var config: Dictionary = {}
 var blocks_db: Dictionary = {}
 
-var game_hour: float = 15.6
+var game_hour: float = 16.33
 var game_day: int = 3
 var time_scale_mult: float = 1.0
 var real_sec_per_hour: float = 60.0
@@ -15,7 +16,11 @@ var current_weather: int = 0
 var core_stones_placed: int = 2
 var titans_killed_count: int = 0
 
+var master_volume: float = 0.80
+var screen_shake_enabled: bool = true
+
 var sky_modulate: CanvasModulate
+var atmosphere_layer: CanvasLayer
 var world_canvas: Node2D
 var colonists_layer: Node2D
 var titans_layer: Node2D
@@ -26,47 +31,114 @@ var camera: Camera2D
 var light_tex: ImageTexture
 var player_light: PointLight2D
 var campfire_lights: Array[PointLight2D] = []
+var sconce_lights: Array[PointLight2D] = []
 
-# НАБОР ПИКСЕЛЬНЫХ ТЕКСТУР 16x16 (Пункты 1, 2 и 3 твоего списка!)
-var tex_grass_variants: Array[ImageTexture] = [] # 5 вариантов травяных тайлов
-var tex_dirt_variants: Array[ImageTexture] = []  # 2 варианта вытоптанной земли
-var tex_path_tile: ImageTexture                  # Каменная дорожка между постройками
-var tex_wood_floor: ImageTexture                 # Половые доски
-var tex_garden_tile: ImageTexture                # Грядка с капустой
-var tex_wall_variants: Array[ImageTexture] = []  # 4 вариации каменной стены с мхом и разной кладкой
-var tex_tower: ImageTexture                      # Зубчатая башня
-var tex_house_exterior: ImageTexture             # Детализированный Дом с черепицей, трубой, 2 окнами и дверью!
-var tex_pine_day: ImageTexture
-var tex_pine_snow: ImageTexture
-var tex_bush: ImageTexture                       # Декоративный куст
-var tex_rock: ImageTexture                       # Декоративный булыжник
-var tex_well: ImageTexture                       # Пиксельный колодец (вместо круга!)
-var tex_campfire: ImageTexture                   # Пиксельный костёр из брёвен и камней
-var tex_crate: ImageTexture                      # Деревянный ящик
+var tex_grass_variants: Array[Texture2D] = []
+var tex_dirt_variants: Array[Texture2D] = []
+var tex_dirt_blend_variants: Array[Texture2D] = []
+var tex_dirt_edge_grass: Texture2D
+var tex_path_variants: Array[Texture2D] = []
+var tex_path_tile: Texture2D
+var tex_wood_floor_variants: Array[Texture2D] = []
+var tex_wood_floor: Texture2D
+var tex_floor_stone_variants: Array[Texture2D] = []
+var tex_floor_stone: Texture2D
+var tex_garden_crops: Array[Texture2D] = []
+var tex_garden_tile: Texture2D
+
+var tex_wall_pillar: Texture2D
+var tex_wall_stone_sec: Array[Texture2D] = []
+var tex_wall_wood_sec: Texture2D
+var tex_wall_side: Texture2D
+var tex_gate_closed: Texture2D
+var tex_gate_open: Texture2D
+var tex_tower_sprite: Texture2D
+
+var tex_block_door_frames: Array[Texture2D] = []
+var tex_block_window_frames: Array[Texture2D] = []
+
+var tex_pine_variants: Array[Texture2D] = []
+var tex_pine_snow_variants: Array[Texture2D] = []
+var tex_oak_variants: Array[Texture2D] = []
+var tex_oak_snow_variants: Array[Texture2D] = []
+var tex_pine_day: Texture2D
+var tex_pine_snow: Texture2D
+var tex_oak_tree: Texture2D
+
+var tex_bush: Texture2D
+var tex_bush_variants: Array[Texture2D] = []
+var tex_flowers: Texture2D
+var tex_flowers_variants: Array[Texture2D] = []
+var tex_rock: Texture2D
+var tex_rock_variants: Array[Texture2D] = []
+var tex_grass_tuft_variants: Array[Texture2D] = []
+var has_grass_tuft_png: bool = false
+
+var tex_stump: Texture2D
+var tex_fallen_log: Texture2D
+var tex_well: Texture2D
+var tex_bed: Texture2D
+var tex_tent: ImageTexture
+var tex_woodpile: ImageTexture
+var tex_sawhorse: ImageTexture
+var tex_cart: ImageTexture
+var tex_campfire_frames: Array[Texture2D] = []
+var tex_wall_torch_frames: Array[Texture2D] = []
+var has_wall_torch_png: bool = false
+var tex_ash_pile: Texture2D
+var has_ash_pile_png: bool = false
+
+var tex_crate: Texture2D
+var tex_workbench: Texture2D
+var tex_barrel: Texture2D
+var tex_hotbar_icons: Array[Texture2D] = []
+
+var tex_ui_heart: Texture2D
+var tex_ui_food: Texture2D
+var tex_ui_water: Texture2D
+var tex_ui_key_e: Texture2D
+var tex_ui_panel: Texture2D
 
 var sfx_player: AudioStreamPlayer
 var sfx_playback: AudioStreamGeneratorPlayback
 
-# ground_map: 0=трава, 1=вытоптанная земля у дома, 2=пол внутри дома, 3=грядка, 4=каменная дорожка, 5=снег
 var ground_map: Dictionary = {}
 var wall_map: Dictionary = {}
-var decor_map: Dictionary = {} # Vector2i -> "bush" или "rock" (редкие кусты и камни!)
+var decor_map: Dictionary = {}
+var _ground_tint_cache: Dictionary = {}
+var _grass_variant_cache: Dictionary = {}
 var ash_piles: Array[Vector2] = []
+
+var wall_torches: Array[Vector2i] = [
+	Vector2i(-11, -13), Vector2i(-3, -13), Vector2i(3, -13), Vector2i(11, -13),
+	Vector2i(-11, 7), Vector2i(-3, 7), Vector2i(3, 7), Vector2i(11, 7),
+	Vector2i(-15, -5), Vector2i(-15, 2), Vector2i(14, -5), Vector2i(14, 2),
+	Vector2i(-10, -5), Vector2i(-8, -5), Vector2i(3, -3), Vector2i(11, -3)
+]
 
 var water_well_cell := Vector2i(-5, 3)
 var bed_cell := Vector2i(-12, -9)
-var campfires: Array[Vector2i] = [Vector2i(-6, -8), Vector2i(-6, -1)]
-var workbenches: Array[Vector2i] = [Vector2i(-10, -2), Vector2i(2, 1)]
-var watchtowers: Array[Vector2i] = [Vector2i(-15, -13), Vector2i(14, -13), Vector2i(-15, 7), Vector2i(14, 7)]
+var campfires: Array[Vector2i] = [Vector2i(5, 2), Vector2i(4, -9)]
+var workbenches: Array[Vector2i] = [Vector2i(-7, -9), Vector2i(2, 1)]
+var watchtowers: Array[Vector2i] = [
+	Vector2i(-15, -13), Vector2i(14, -13), Vector2i(-15, 7), Vector2i(14, 7),
+	Vector2i(-2, -13), Vector2i(2, -13)
+]
 var loot_crates: Dictionary = {}
 var hit_sparks: Array[Dictionary] = []
 
-var selected_block_id: int = 4
+var combat_hotbar_slots: Array[Dictionary] = []
+var build_hotbar_slots: Array[int] = [1, 2, 3, 4, 5, 6, 9, 10, 0, 0]
+
+var selected_block_id: int = 1
 var selected_hotbar_slot: int = 0
 var build_mode_active: bool = false
 var screen_shake_amount: float = 0.0
 
 var hud_bars_ctrl: Control
+var clock_card_ctrl: PanelContainer
+var quest_card_ctrl: PanelContainer
+var quick_bar_ctrl: HBoxContainer
 var lbl_day_clock: Label
 var lbl_quest_list: Label
 var minimap_ctrl: Control
@@ -76,22 +148,29 @@ var lbl_alert_title: Label
 var lbl_alert_sub: Label
 var prompt_e_panel: PanelContainer
 var lbl_prompt_e: Label
+var mobile_hud: MobileHUD
 
 var inv_panel: PanelContainer
-var inv_recipes_box: VBoxContainer
+var current_bag_tab: int = 0
+var inv_list_box: VBoxContainer
 var lbl_detail_title: Label
 var lbl_detail_desc: Label
 var lbl_detail_ing: Label
-var btn_craft_action: Button
+var detail_actions_box: VBoxContainer
+var selected_bag_entry_index: int = 0
 var selected_recipe_index: int = 0
 
+var settings_panel: PanelContainer
+
 func _ready() -> void:
-	# Включаем жёсткую привязку к пиксельной сетке (никаких дробных сглаженных пикселей!)
 	get_viewport().snap_2d_transforms_to_pixel = true
 	get_viewport().snap_2d_vertices_to_pixel = true
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
+	Phase1Visuals.ensure_initialized()
+	ArtLoader.check_and_report_missing()
 	_load_config()
+	_init_default_hotbars()
 	_generate_all_pixel_art_tiles()
 	_setup_procedural_audio()
 	_setup_lighting()
@@ -101,6 +180,8 @@ func _ready() -> void:
 	_spawn_campfire_point_lights()
 	_spawn_initial_colonists()
 	_spawn_initial_titans()
+	atmosphere_layer = Phase1Visuals.create_atmosphere_vignette_layer()
+	add_child(atmosphere_layer)
 	_setup_reference_hud()
 
 func _load_config() -> void:
@@ -112,297 +193,950 @@ func _load_config() -> void:
 			config = parsed
 	blocks_db = config.get("blocks", {})
 
-# ГЕНЕРАЦИЯ ВСЕХ ПОПИКСЕЛЬНЫХ ТАЙЛОВ И СПРАЙТОВ ПО СЕТКЕ 16x16
+	if not blocks_db.has("9"):
+		blocks_db["9"] = {
+			"id": 9, "name": "Окно", "hp": 40, "span": 4, "anchor": false,
+			"solid": true, "is_window": true, "lets_light": true, "hookable": true,
+			"drop": "wood", "cost_item": "wood"
+		}
+	if not blocks_db.has("10"):
+		blocks_db["10"] = {
+			"id": 10, "name": "Каменный пол", "hp": 45, "span": 8, "anchor": false,
+			"solid": false, "floor_type": 7, "hookable": false,
+			"drop": "stone", "cost_item": "stone"
+		}
+
+func _init_default_hotbars() -> void:
+	combat_hotbar_slots = [
+		{"kind": "tool", "id": "torch", "name": "Факел (свет вокруг героя)", "icon_idx": 0},
+		{"kind": "tool", "id": "axe", "name": "Топор лесоруба", "icon_idx": 1},
+		{"kind": "tool", "id": "pickaxe", "name": "Кирка каменотёса", "icon_idx": 2},
+		{"kind": "tool", "id": "blades", "name": "Парные клинки (Перезарядка: R)", "icon_idx": 3},
+		{"kind": "tool", "id": "crossbow", "name": "Охотничий арбалет", "icon_idx": 4},
+		{"kind": "item", "id": "core_stone", "name": "Остов-камень", "icon_idx": 5},
+		{"kind": "item", "id": "wood", "name": "Деревянные доски", "icon_idx": 6},
+		{"kind": "item", "id": "stone", "name": "Булыжник", "icon_idx": 7},
+		{"kind": "item", "id": "herbs", "name": "Целебные травы", "icon_idx": 8},
+		{"kind": "item", "id": "canned_food", "name": "Консервы (Тап — съесть)", "icon_idx": 9}
+	]
+	build_hotbar_slots = [1, 2, 3, 4, 5, 6, 9, 10, 0, 0]
+	selected_hotbar_slot = 0
+	selected_block_id = build_hotbar_slots[0]
+
+func select_hotbar_slot_index(slot_idx: int, allow_consume_on_reselect: bool = false) -> void:
+	slot_idx = clampi(slot_idx, 0, 9)
+	var was_already_selected: bool = (selected_hotbar_slot == slot_idx)
+	selected_hotbar_slot = slot_idx
+
+	if slot_idx < build_hotbar_slots.size():
+		selected_block_id = int(build_hotbar_slots[slot_idx])
+
+	if not build_mode_active and slot_idx < combat_hotbar_slots.size():
+		var s_data: Dictionary = combat_hotbar_slots[slot_idx]
+		var s_kind: String = str(s_data.get("kind", "empty"))
+		var s_id: String = str(s_data.get("id", ""))
+		if s_kind == "tool" and s_id == "torch" and was_already_selected and allow_consume_on_reselect:
+			player.torch_lit = not player.torch_lit
+			if is_instance_valid(player_light):
+				player_light.visible = player.torch_lit
+		elif s_kind == "item" and was_already_selected and allow_consume_on_reselect and s_id != "":
+			var i_type: String = str(player.surv.items_db.get(s_id, {}).get("type", "mat"))
+			if i_type in ["food", "drink", "med", "placeable"]:
+				player.use_inventory_item(s_id)
+	play_sfx("ui")
+	queue_redraw()
+
+func _cycle_day_night_weather() -> void:
+	if current_weather == 3:
+		current_weather = 0
+		game_hour = 16.33
+	elif game_hour < 18.0:
+		game_hour = 22.2
+	else:
+		current_weather = 3
+		game_hour = 8.5
+	play_sfx("ui")
+	queue_redraw()
+
 func _generate_all_pixel_art_tiles() -> void:
-	# 1. Мягкий свет для PointLight2D
-	var l_img := Image.create(128, 128, false, Image.FORMAT_RGBA8)
-	var center := Vector2(64, 64)
-	for x in range(128):
-		for y in range(128):
-			var d: float = Vector2(x, y).distance_to(center) / 64.0
-			l_img.set_pixel(x, y, Color(1, 1, 1, pow(clampf(1.0 - d, 0.0, 1.0), 2.2)))
-	light_tex = ImageTexture.create_from_image(l_img)
+	light_tex = Phase1Visuals.build_natural_torch_light_texture()
 
-	# 2. Пять вариантов травяных тайлов 16x16 (Пункт 3: спокойная база + редкие пиксельные пучки)
-	for v in range(5):
-		var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
-		for x in range(16):
-			for y in range(16):
-				var n: int = ((x * 13 + y * 29 + v * 7) % 9)
-				var col := Color("#233422") if n < 6 else Color("#1f2e1e")
-				img.set_pixel(x, y, col)
-		if v == 1 or v == 2:
-			# Маленький аккуратный пучок травы из 4 пикселей
-			var gx: int = 4 + v * 3
-			var gy: int = 6 + v * 2
-			img.set_pixel(gx, gy, Color("#334d30"))
-			img.set_pixel(gx, gy - 1, Color("#3e5c39"))
-			img.set_pixel(gx + 2, gy, Color("#334d30"))
-		elif v == 3:
-			# Редкий тёмный клевер/мох
-			img.set_pixel(9, 10, Color("#192618"))
-			img.set_pixel(10, 10, Color("#2f472d"))
-		tex_grass_variants.append(ImageTexture.create_from_image(img))
+	var ground_pack: Dictionary = Phase1Visuals.generate_ground_textures()
+	tex_grass_variants = ArtLoader.get_frames("ground_grass", ground_pack["grass"])
+	tex_dirt_variants = ArtLoader.get_frames("ground_dirt", ground_pack["dirt"])
+	tex_dirt_blend_variants = ArtLoader.get_frames("ground_dirt_edge", ground_pack["blend"])
+	tex_dirt_edge_grass = tex_dirt_blend_variants[0]
 
-	# 3. Вытоптанная земля около дома (2 варианта) и Каменная дорожка
-	for v in range(2):
-		var d_img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
-		for x in range(16):
-			for y in range(16):
-				var n: int = ((x * 17 + y * 31 + v * 11) % 7)
-				d_img.set_pixel(x, y, Color("#3b2e22") if n < 5 else Color("#33271c"))
-		if v == 1:
-			d_img.set_pixel(5, 8, Color("#4a3b2c"))
-			d_img.set_pixel(6, 8, Color("#4a3b2c"))
-		tex_dirt_variants.append(ImageTexture.create_from_image(d_img))
+	var fb_paths: Array = []
+	for v in range(6):
+		fb_paths.append(_create_path_variant_tile(v))
+	tex_path_variants = ArtLoader.get_frames("ground_path", fb_paths)
+	tex_path_tile = tex_path_variants[0]
 
-	# Каменная дорожка (брусчатка из отдельных округлых булыжников на земле)
-	var p_img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
-	p_img.fill(Color("#362a1f"))
-	var stones := [Rect2i(2, 2, 5, 4), Rect2i(9, 3, 5, 4), Rect2i(3, 9, 6, 5), Rect2i(10, 10, 4, 4)]
-	for r in stones:
-		for x in range(r.position.x, r.end.x):
-			for y in range(r.position.y, r.end.y):
-				var edge: bool = (x == r.position.x or y == r.position.y or x == r.end.x - 1 or y == r.end.y - 1)
-				p_img.set_pixel(x, y, Color("#1c1815") if edge else Color("#525861"))
-	tex_path_tile = ImageTexture.create_from_image(p_img)
-
-	# Деревянный пол и Грядка огорода
-	var wf_img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
-	for x in range(16):
-		for y in range(16):
-			wf_img.set_pixel(x, y, Color("#29190f") if (y == 7 or y == 15) else Color("#4a301d"))
-	tex_wood_floor = ImageTexture.create_from_image(wf_img)
-
-	var g_img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
-	g_img.fill(Color("#241911"))
-	for x in range(2, 14):
-		for y in range(2, 14):
-			var d: int = abs(x - 8) + abs(y - 8)
-			if d == 5:
-				g_img.set_pixel(x, y, Color("#121619"))
-			elif d < 5:
-				g_img.set_pixel(x, y, Color("#568c44") if d <= 2 else Color("#345c2c"))
-	tex_garden_tile = ImageTexture.create_from_image(g_img)
-
-	# 4. Четыре вариации каменных стен 16x24 (Пункт 2: разные камни, трещины и мох!)
+	var fb_wood_floors: Array = []
+	var fb_stone_floors: Array = []
 	for v in range(4):
-		var w_img := Image.create(16, 24, false, Image.FORMAT_RGBA8)
-		var c_out := Color("#0f1318")
-		var c_top := Color("#505866")
-		var c_front := Color("#3a404a")
-		var c_dark := Color("#2a2f37")
-		var c_moss := Color("#2d472b")
+		fb_wood_floors.append(_create_wood_floor_variant_tile(v))
+		fb_stone_floors.append(_create_stone_floor_variant_tile(v))
+	tex_wood_floor_variants = ArtLoader.get_frames("ground_wood_floor", fb_wood_floors)
+	tex_wood_floor = tex_wood_floor_variants[0]
+	tex_floor_stone_variants = ArtLoader.get_frames("floor_stone", fb_stone_floors)
+	tex_floor_stone = tex_floor_stone_variants[0]
 
-		for x in range(16):
-			for y in range(4, 24):
-				if x == 0 or x == 15 or y == 4 or y == 23 or y == 12:
-					w_img.set_pixel(x, y, c_out)
-				elif y < 12:
-					w_img.set_pixel(x, y, c_top)
-				else:
-					w_img.set_pixel(x, y, c_front if y < 19 else c_dark)
+	var fb_gardens: Array = []
+	for v in range(4):
+		fb_gardens.append(_create_garden_crop_tile(v))
+	tex_garden_crops = ArtLoader.get_frames("ground_garden", fb_gardens)
+	tex_garden_tile = tex_garden_crops[0]
 
-		# Индивидуальный рисунок камней и швов для каждого из 4 вариантов
-		var seam_x1: int = 5 + (v * 3) % 6
-		var seam_x2: int = 3 + ((v + 2) * 3) % 8
-		for y in range(13, 18):
-			w_img.set_pixel(seam_x1, y, c_out)
-		for x in range(1, 15):
-			w_img.set_pixel(x, 18, c_out)
-		for y in range(19, 23):
-			w_img.set_pixel(seam_x2, y, c_out)
+	tex_wall_pillar = ArtLoader.get_single("wall_pillar", _create_wall_pillar_tile())
+	var fb_walls: Array = []
+	for v in range(4):
+		fb_walls.append(_create_wall_stone_section_tile(v))
+	tex_wall_stone_sec = ArtLoader.get_frames("wall_stone", fb_walls)
+	tex_wall_wood_sec = ArtLoader.get_single("wall_wood_top", _create_wall_wood_topped_tile())
+	tex_wall_side = ArtLoader.get_single("wall_side", _create_wall_side_tile())
 
-		# Зубец сверху на чётных вариантах и пятна мха на варианте 2
-		if v % 2 == 0:
-			for x in range(3, 13):
-				for y in range(0, 5):
-					w_img.set_pixel(x, y, c_out if (x == 3 or x == 12 or y == 0) else c_top.lightened(0.08))
-		if v == 1 or v == 3:
-			w_img.set_pixel(seam_x1 + 1, 13, c_moss)
-			w_img.set_pixel(seam_x1 + 2, 13, c_moss)
-			w_img.set_pixel(seam_x1 + 1, 14, c_moss)
+	var fb_door_closed := _create_door_frame_tile(false)
+	var fb_door_open := _create_door_frame_tile(true)
+	tex_gate_closed = ArtLoader.get_single("gate_closed", fb_door_closed)
+	tex_gate_open = fb_door_open
+	tex_block_door_frames = ArtLoader.get_frames("block_door", [tex_gate_closed, fb_door_open])
 
-		tex_wall_variants.append(ImageTexture.create_from_image(w_img))
+	var fb_win_day := _create_window_frame_tile(false)
+	var fb_win_lit := _create_window_frame_tile(true)
+	tex_block_window_frames = ArtLoader.get_frames("block_window", [fb_win_day, fb_win_lit])
 
-	# 5. Редкие пиксельные кусты и булыжники 16x16 (Пункт 3!)
-	var b_img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
-	for x in range(2, 14):
-		for y in range(4, 15):
-			var d: int = abs(x - 8) + abs(y - 10)
-			if d == 6 or y == 14:
-				b_img.set_pixel(x, y, Color("#0f1418"))
-			elif d < 6:
-				b_img.set_pixel(x, y, Color("#2f4f31") if y < 9 else Color("#1c3320"))
-	b_img.set_pixel(6, 8, Color("#c94040")) # Ягодка
-	b_img.set_pixel(10, 9, Color("#c94040"))
-	tex_bush = ImageTexture.create_from_image(b_img)
+	tex_tower_sprite = ArtLoader.get_single("tower", _create_corner_tower_sprite())
 
-	var r_img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
-	for x in range(3, 13):
-		for y in range(6, 14):
-			var d: int = abs(x - 8) + abs(y - 10)
-			if d == 5 or y == 13:
-				r_img.set_pixel(x, y, Color("#0f1418"))
-			elif d < 5:
-				r_img.set_pixel(x, y, Color("#636b75") if y < 9 else Color("#434952"))
-	tex_rock = ImageTexture.create_from_image(r_img)
+	var fb_bushes: Array = []
+	var fb_flowers_arr: Array = []
+	var fb_rocks: Array = []
+	for v in range(4):
+		fb_bushes.append(_create_bush_variant_tile(v))
+		fb_flowers_arr.append(_create_flowers_variant_tile(v))
+		fb_rocks.append(_create_rock_variant_tile(v))
+	tex_bush_variants = ArtLoader.get_frames("bush", fb_bushes)
+	tex_bush = tex_bush_variants[0]
+	tex_flowers_variants = ArtLoader.get_frames("flowers", fb_flowers_arr)
+	tex_flowers = tex_flowers_variants[0]
+	tex_rock_variants = ArtLoader.get_frames("rock", fb_rocks)
+	tex_rock = tex_rock_variants[0]
 
-	# 6. Пиксельный колодец 16x16, костёр 16x16 и ящик 16x16 (вместо векторных кругов!)
-	var well_img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
-	for x in range(1, 15):
-		for y in range(2, 15):
-			var d: int = abs(x - 8) + abs(y - 8)
-			if d == 6 or d == 5:
-				well_img.set_pixel(x, y, Color("#0f1318") if d == 6 else Color("#525a66"))
-			elif d < 5:
-				well_img.set_pixel(x, y, Color("#1b4661"))
-	for x in range(2, 14):
-		well_img.set_pixel(x, 2, Color("#5c3c24"))
-		well_img.set_pixel(x, 3, Color("#422a18"))
-	tex_well = ImageTexture.create_from_image(well_img)
+	var fb_tufts: Array = []
+	for v in range(4):
+		fb_tufts.append(_create_grass_tuft_variant_tile(v))
+	tex_grass_tuft_variants = ArtLoader.get_frames("grass_tuft", fb_tufts)
+	has_grass_tuft_png = true
 
-	var cf_img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
-	for x in range(3, 13):
-		for y in range(8, 15):
-			if abs(x - 8) + abs(y - 11) <= 5:
-				cf_img.set_pixel(x, y, Color("#4a301d") if y > 10 else Color("#ff6d1c"))
-	cf_img.set_pixel(8, 6, Color("#ffd54f"))
-	cf_img.set_pixel(7, 7, Color("#ff9800"))
-	cf_img.set_pixel(8, 7, Color("#fff176"))
-	tex_campfire = ImageTexture.create_from_image(cf_img)
+	tex_stump = ArtLoader.get_single("stump", _create_stump_tile())
+	tex_fallen_log = ArtLoader.get_single("fallen_log", _create_fallen_log_tile())
+	tex_well = ArtLoader.get_single("well", _create_well_tile())
+	tex_bed = _create_bed_tile()
+	tex_tent = _create_survivor_tent_sprite()
+	tex_woodpile = _create_woodpile_tile()
+	tex_sawhorse = _create_sawhorse_tile()
+	tex_cart = _create_wooden_cart_sprite()
+	tex_crate = ArtLoader.get_single("crate", _create_crate_tile())
+	tex_workbench = ArtLoader.get_single("workbench", _create_workbench_tile())
+	tex_barrel = ArtLoader.get_single("barrel", _create_barrel_tile())
 
-	var cr_img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
-	for x in range(2, 14):
-		for y in range(2, 14):
-			var edge: bool = (x == 2 or x == 13 or y == 2 or y == 13 or y == 8)
-			cr_img.set_pixel(x, y, Color("#121519") if edge else (Color("#8f612e") if y < 6 else Color("#734c22")))
-	tex_crate = ImageTexture.create_from_image(cr_img)
+	var fb_cf: Array = []
+	for f in range(3):
+		fb_cf.append(_create_campfire_tile(f))
+	tex_campfire_frames = ArtLoader.get_frames("campfire", fb_cf)
 
-	# 7. ПЕРЕРАБОТАННЫЙ ДОМ 144x96 (Пункт 2: контурная черепичная крыша, дымоход, дверь и 2 светящихся окна!)
-	tex_house_exterior = _create_detailed_house_sprite()
-	tex_pine_day = _create_procedural_pine_texture(false)
-	tex_pine_snow = _create_procedural_pine_texture(true)
+	has_wall_torch_png = ArtLoader.has_file("wall_torch")
+	if has_wall_torch_png:
+		tex_wall_torch_frames = ArtLoader.get_frames("wall_torch", [])
 
-func _create_detailed_house_sprite() -> ImageTexture:
-	var w: int = 144 # 9 клеток
-	var h: int = 96  # 6 клеток
-	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
-	var c_out := Color("#0e1217")
-	var c_roof_top := Color("#6e3f28")
-	var c_roof_mid := Color("#542f1e")
-	var c_roof_dark := Color("#3b2014")
-	var c_wall := Color("#47301f")
-	var c_log := Color("#362315")
-	var c_stone := Color("#434a54")
+	has_ash_pile_png = ArtLoader.has_file("ash_pile")
+	if has_ash_pile_png:
+		tex_ash_pile = ArtLoader.get_single("ash_pile", null)
 
-	# 1. Двускатная черепичная крыша с коньком и ступенчатым пиксельным контуром (y: 8..60)
-	for y in range(8, 62):
-		var margin: int = max(0, (24 - y) / 2)
-		for x in range(margin, w - margin):
-			var is_border: bool = (x == margin or x == w - margin - 1 or y == 8 or y == 61 or y == 14)
-			if is_border:
+	var fb_pines: Array = []
+	var fb_pines_snow: Array = []
+	var fb_oaks: Array = []
+	tex_oak_snow_variants.clear()
+	for v in range(4):
+		fb_pines.append(_create_procedural_pine_texture(false, v))
+		fb_pines_snow.append(_create_procedural_pine_texture(true, v))
+		fb_oaks.append(_create_procedural_oak_texture(v, false))
+		tex_oak_snow_variants.append(_create_procedural_oak_texture(v, true))
+	tex_pine_variants = ArtLoader.get_frames("tree_pine", fb_pines)
+	tex_pine_snow_variants = ArtLoader.get_frames("tree_pine_snow", fb_pines_snow)
+	tex_oak_variants = ArtLoader.get_frames("tree_oak", fb_oaks)
+	tex_pine_day = tex_pine_variants[0]
+	tex_pine_snow = tex_pine_snow_variants[0]
+	tex_oak_tree = tex_oak_variants[0]
+
+	BuildSystem.ensure_autowall_textures()
+	BuildSystem.ensure_roof_textures()
+
+	_generate_hotbar_icons()
+	tex_ui_heart = ArtLoader.get_single("ui_heart", null)
+	tex_ui_food = ArtLoader.get_single("ui_food", null)
+	tex_ui_water = ArtLoader.get_single("ui_water", null)
+	tex_ui_key_e = ArtLoader.get_single("ui_key_e", null)
+	tex_ui_panel = ArtLoader.get_single("ui_panel", null)
+
+func _create_survivor_tent_sprite() -> ImageTexture:
+	var img := Image.create(32, 24, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	var c_cloth_hi := Color("#8c7a62")
+	var c_cloth := Color("#6e5e49")
+	var c_cloth_sh := Color("#4a3e30")
+	var c_wood := Color("#5b3a22")
+	for y in range(3, 22):
+		var span: int = int(float(y - 2) * 0.72)
+		for x in range(16 - span, 16 + span + 1):
+			if x == 16 - span or x == 16 + span or y == 21:
 				img.set_pixel(x, y, c_out)
-			elif y < 14:
-				img.set_pixel(x, y, c_roof_top) # Деревянный конёк крыши
+			elif abs(x - 16) <= 3 and y >= 11:
+				img.set_pixel(x, y, Color("#1a1410"))
+			elif x < 16:
+				img.set_pixel(x, y, c_cloth_hi if (x + y) % 4 != 0 else c_cloth)
 			else:
-				# Пиксельная чешуя черепицы (арочный узор каждые 6x6 пикселей)
-				var tile_row: bool = (y % 7 == 0)
-				var tile_col: bool = ((x + (y / 7) * 3) % 6 == 0)
-				if tile_row or tile_col:
-					img.set_pixel(x, y, c_roof_dark)
-				else:
-					img.set_pixel(x, y, c_roof_mid if y < 44 else c_roof_dark.lightened(0.05))
-
-	# 2. Каменный дымоход на правой части крыши (x: 104..120, y: 0..28)
-	for x in range(104, 121):
-		for y in range(0, 28):
-			var edge: bool = (x == 104 or x == 120 or y == 0 or y == 27 or y == 4)
-			if edge:
-				img.set_pixel(x, y, c_out)
-			else:
-				img.set_pixel(x, y, c_stone.lightened(0.1) if y < 4 else (c_stone if (x + y) % 5 != 0 else c_stone.darkened(0.2)))
-
-	# 3. Бревенчатый фасад стены с каменным цоколем внизу (y: 62..95, x: 4..140)
-	for x in range(4, w - 4):
-		for y in range(62, h):
-			if x == 4 or x == w - 5 or y == h - 1:
-				img.set_pixel(x, y, c_out)
-			elif y >= h - 7:
-				img.set_pixel(x, y, c_stone if (x % 8 != 0) else c_out)
-			elif y % 5 == 0:
-				img.set_pixel(x, y, c_log)
-			else:
-				img.set_pixel(x, y, c_wall)
-
-	# 4. Деревянная дверь с коваными петлями и порогом (x: 56..76, y: 66..95)
-	for x in range(56, 77):
-		for y in range(66, h):
-			if x == 56 or x == 76 or y == 66:
-				img.set_pixel(x, y, c_out)
-			elif (x - 56) % 5 == 0:
-				img.set_pixel(x, y, Color("#24150c"))
-			else:
-				img.set_pixel(x, y, Color("#633d22"))
-	# Ручка-кольцо и петли на двери
-	img.set_pixel(72, 80, Color("#d4a349"))
-	img.set_pixel(72, 81, Color("#d4a349"))
-
-	# 5. ДВА СВЕТЯЩИХСЯ ОКНА со ставнями слева и справа от двери (x: 20..38 и x: 96..114)
-	for wx in [20, 96]:
-		for x in range(wx, wx + 19):
-			for y in range(68, 84):
-				var border: bool = (x == wx or x == wx + 18 or y == 68 or y == 83)
-				var cross: bool = (x == wx + 9 or y == 75)
-				if border or cross:
-					img.set_pixel(x, y, c_out)
-				else:
-					var glow := Color("#ffab40") if (y < 75 and x < wx + 9) else Color("#ff8f00")
-					img.set_pixel(x, y, glow)
-
+				img.set_pixel(x, y, c_cloth if (x - y) % 4 != 0 else c_cloth_sh)
+	img.set_pixel(16, 2, c_wood)
+	img.set_pixel(16, 3, c_wood)
 	return ImageTexture.create_from_image(img)
 
-func _create_procedural_pine_texture(snowy: bool) -> ImageTexture:
+func _create_woodpile_tile() -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	var logs := [Vector2i(4, 12), Vector2i(8, 12), Vector2i(12, 12), Vector2i(6, 9), Vector2i(10, 9), Vector2i(8, 6)]
+	for l in logs:
+		for dx in range(-2, 3):
+			for dy in range(-2, 3):
+				if abs(dx) + abs(dy) <= 3:
+					var edge: bool = (abs(dx) + abs(dy) == 3)
+					var cut: bool = (abs(dx) <= 1 and abs(dy) <= 1)
+					img.set_pixel(l.x + dx, l.y + dy, c_out if edge else (Color("#b88454") if cut else Color("#5b3a22")))
+	return ImageTexture.create_from_image(img)
+
+func _create_sawhorse_tile() -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	for x in range(2, 14):
+		for y in range(6, 10):
+			img.set_pixel(x, y, c_out if (y == 6 or y == 9 or x == 2 or x == 13) else Color("#7a5230"))
+	for i in range(4):
+		img.set_pixel(4 - i / 2, 10 + i, Color("#5b3a22"))
+		img.set_pixel(5 + i / 2, 10 + i, Color("#3b2516"))
+		img.set_pixel(11 - i / 2, 10 + i, Color("#5b3a22"))
+		img.set_pixel(12 + i / 2, 10 + i, Color("#3b2516"))
+	return ImageTexture.create_from_image(img)
+
+func _create_wooden_cart_sprite() -> ImageTexture:
+	var img := Image.create(24, 18, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	for x in range(3, 19):
+		for y in range(4, 13):
+			var edge: bool = (x == 3 or x == 18 or y == 4 or y == 12 or y == 8)
+			img.set_pixel(x, y, c_out if edge else (Color("#8a5d36") if y < 8 else Color("#5b3a22")))
+	for x in range(19, 23):
+		img.set_pixel(x, 10, Color("#5b3a22"))
+	for dx in range(-4, 5):
+		for dy in range(-4, 5):
+			var d: float = Vector2(dx, dy).length()
+			if d >= 3.2 and d <= 4.4:
+				img.set_pixel(10 + dx, 13 + dy, c_out if d > 3.9 else Color("#7a5230"))
+			elif (dx == 0 or dy == 0) and d < 3.5:
+				img.set_pixel(10 + dx, 13 + dy, Color("#5b3a22"))
+	return ImageTexture.create_from_image(img)
+
+func _create_grass_tuft_variant_tile(v: int) -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var blades := [-4, -2, 0, 2, 4]
+	for i in range(blades.size()):
+		var bx: int = 8 + blades[i] + ((v + i) % 2) - 1
+		var bh: int = 4 + ((i * 3 + v * 2) % 5)
+		for s in range(bh):
+			var bend: int = (1 if blades[i] >= 0 else -1) if s > 3 else 0
+			var col := Color("#5c8046") if s >= bh - 1 else (Color("#3d5431") if s >= 2 else Color("#1e2b19"))
+			img.set_pixel(clampi(bx + bend, 1, 14), 13 - s, col)
+	return ImageTexture.create_from_image(img)
+
+func _create_path_variant_tile(v: int) -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var dirt_cols := [Color("#593f2b"), Color("#664932"), Color("#735339")]
+	for x in range(16):
+		for y in range(16):
+			var d_idx: int = ((x * 5 + y * 7 + v * 3) % 3)
+			img.set_pixel(x, y, dirt_cols[d_idx])
+
+	var layouts := [
+		[Rect2i(1, 1, 6, 5), Rect2i(8, 2, 6, 6), Rect2i(2, 7, 5, 7), Rect2i(8, 9, 7, 5)],
+		[Rect2i(2, 0, 7, 6), Rect2i(10, 1, 5, 5), Rect2i(1, 7, 6, 6), Rect2i(8, 7, 6, 7)],
+		[Rect2i(0, 2, 5, 6), Rect2i(6, 1, 8, 5), Rect2i(2, 9, 7, 6), Rect2i(10, 8, 5, 6)],
+		[Rect2i(1, 1, 7, 7), Rect2i(9, 2, 6, 5), Rect2i(1, 9, 5, 5), Rect2i(7, 8, 8, 6)],
+		[Rect2i(2, 1, 5, 5), Rect2i(8, 0, 6, 6), Rect2i(0, 7, 8, 6), Rect2i(9, 7, 6, 7)],
+		[Rect2i(1, 2, 6, 5), Rect2i(8, 1, 7, 6), Rect2i(2, 8, 6, 6), Rect2i(9, 9, 5, 5)]
+	]
+	var stones: Array = layouts[v % layouts.size()]
+	for i in range(stones.size()):
+		var r: Rect2i = stones[i]
+		var tone_shift: float = -0.05 if ((i + v) % 2 == 0) else 0.04
+		var c_base := Color("#5c626b").lightened(tone_shift)
+		var c_hi := Color("#878f99").lightened(tone_shift)
+		var c_sh := Color("#2b2f36")
+		for x in range(r.position.x, r.end.x):
+			for y in range(r.position.y, r.end.y):
+				var is_corner: bool = (
+					(x == r.position.x or x == r.end.x - 1) and
+					(y == r.position.y or y == r.end.y - 1)
+				)
+				if is_corner:
+					continue
+				var is_bot_edge: bool = (y == r.end.y - 1 or x == r.end.x - 1)
+				var is_top_edge: bool = (y == r.position.y or x == r.position.x)
+				if is_bot_edge:
+					img.set_pixel(x, y, c_sh)
+				elif is_top_edge:
+					img.set_pixel(x, y, c_hi)
+				else:
+					img.set_pixel(x, y, c_base)
+
+	if v % 2 == 0:
+		img.set_pixel(7, 6, Color("#354d2b"))
+		img.set_pixel(7, 7, Color("#263620"))
+	return ImageTexture.create_from_image(img)
+
+func _create_wood_floor_variant_tile(v: int) -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var tones := [Color("#6e472b"), Color("#5b3a22"), Color("#7a5230"), Color("#4f321d")]
+	for x in range(16):
+		for y in range(16):
+			var row: int = y / 4
+			var joint_x: int = ((row * 5 + v * 3) % 12) + 2
+			var seam: bool = (y % 4 == 3 or x == joint_x)
+			if seam:
+				img.set_pixel(x, y, Color("#2b190e"))
+			else:
+				var col: Color = tones[(row + v) % tones.size()]
+				if y % 4 == 0:
+					col = col.lightened(0.06)
+				img.set_pixel(x, y, col)
+	return ImageTexture.create_from_image(img)
+
+func _create_stone_floor_variant_tile(v: int) -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var c_mortar := Color("#2b2f36")
+	var slates := [Color("#4a4f59"), Color("#565c68"), Color("#40454f"), Color("#636975")]
+	var split_x: int = 6 + (v * 3) % 6
+	for x in range(16):
+		for y in range(16):
+			var seam_h: bool = (y == 0 or y == 8)
+			var seam_v: bool = ((y < 8 and (x == 0 or x == split_x)) or (y >= 8 and (x == 3 or x == 11)))
+			if seam_h or seam_v:
+				img.set_pixel(x, y, c_mortar)
+			elif y == 1 or y == 9:
+				img.set_pixel(x, y, Color("#7c838f"))
+			else:
+				var idx: int = ((x / 5) + (y / 8) * 2 + v) % slates.size()
+				img.set_pixel(x, y, slates[idx])
+	return ImageTexture.create_from_image(img)
+
+func _create_garden_crop_tile(crop_type: int) -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	for x in range(16):
+		for y in range(16):
+			var furrow: bool = (y % 4 == 0 or y % 4 == 3)
+			var soil := Color("#21150d") if (y % 4 == 0) else (Color("#2b1c12") if furrow else Color("#382518"))
+			if (x + y * 3 + crop_type) % 11 == 0:
+				soil = soil.lightened(0.08)
+			img.set_pixel(x, y, soil)
+
+	for cx in [4, 11]:
+		for cy in [5, 11]:
+			match crop_type % 4:
+				0:
+					for dx in range(-2, 3):
+						for dy in range(-2, 3):
+							if abs(dx) + abs(dy) <= 3:
+								var c_leaf := Color("#6f8f4c") if (dx + dy <= 0) else Color("#3d5a2e")
+								if dx == 0 and dy == 0:
+									c_leaf = Color("#8fb366")
+								img.set_pixel(cx + dx, cy + dy, c_leaf)
+				1:
+					img.set_pixel(cx, cy + 1, Color("#e07a2b"))
+					img.set_pixel(cx, cy, Color("#f2913d"))
+					img.set_pixel(cx - 1, cy - 1, Color("#4d6d37"))
+					img.set_pixel(cx, cy - 1, Color("#6f8f4c"))
+					img.set_pixel(cx + 1, cy - 1, Color("#3d5a2e"))
+					img.set_pixel(cx, cy - 2, Color("#6f8f4c"))
+				2:
+					img.set_pixel(cx, cy + 1, Color("#2f4526"))
+					img.set_pixel(cx, cy, Color("#3d5a2e"))
+					img.set_pixel(cx - 1, cy - 1, Color("#5c99d6"))
+					img.set_pixel(cx + 1, cy - 1, Color("#5c99d6"))
+					img.set_pixel(cx, cy - 2, Color("#85bbf0"))
+				_:
+					img.set_pixel(cx, cy + 1, Color("#2f4526"))
+					img.set_pixel(cx, cy, Color("#4d6d37"))
+					img.set_pixel(cx - 1, cy - 1, Color("#6f8f4c"))
+					img.set_pixel(cx + 1, cy, Color("#6f8f4c"))
+	return ImageTexture.create_from_image(img)
+
+func _create_bed_tile() -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	var c_wood := Color("#5b3a22")
+	var c_pillow := Color("#d8d2c8")
+	var c_blanket := Color("#873b2b")
+	for x in range(2, 14):
+		for y in range(1, 15):
+			var edge: bool = (x == 2 or x == 13 or y == 1 or y == 14)
+			if edge:
+				img.set_pixel(x, y, c_out)
+			elif y <= 3 or y == 13:
+				img.set_pixel(x, y, c_wood)
+			elif y <= 6:
+				img.set_pixel(x, y, c_pillow)
+			else:
+				img.set_pixel(x, y, c_blanket if y < 11 else c_blanket.darkened(0.18))
+	return ImageTexture.create_from_image(img)
+
+func _create_door_frame_tile(is_open: bool) -> ImageTexture:
+	var img := Image.create(16, 24, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	var c_wood_hi := Color("#9a6b3f")
+	var c_wood_mid := Color("#7a5230")
+	var c_wood_dark := Color("#5b3a22")
+	var c_iron := Color("#9aa1ab")
+	var c_sill := Color("#4a4f59")
+
+	if not is_open:
+		for x in range(16):
+			for y in range(2, 24):
+				var edge: bool = (x == 0 or x == 15 or y == 2 or y == 23)
+				var iron_band: bool = (y == 8 or y == 18)
+				var plank_seam: bool = (x % 4 == 0)
+				if edge or plank_seam:
+					img.set_pixel(x, y, c_out)
+				elif iron_band:
+					img.set_pixel(x, y, c_iron if x % 3 == 1 else c_sill)
+				else:
+					img.set_pixel(x, y, c_wood_mid if y < 14 else c_wood_dark)
+		img.set_pixel(12, 13, Color("#ffcc66"))
+	else:
+		for x in range(1, 15):
+			img.set_pixel(x, 22, c_sill)
+			img.set_pixel(x, 23, c_out)
+		for y in range(2, 24):
+			for x in range(0, 5):
+				var edge: bool = (x == 0 or x == 4 or y == 2 or y == 23)
+				img.set_pixel(x, y, c_out if edge else (c_wood_hi if x == 1 else c_wood_mid))
+			for x in range(13, 16):
+				var edge_r: bool = (x == 13 or x == 15 or y == 2 or y == 23)
+				img.set_pixel(x, y, c_out if edge_r else c_wood_dark)
+		for x in range(0, 16):
+			for y in range(2, 6):
+				var arch_edge: bool = (y == 2 or y == 5 or x == 0 or x == 15)
+				img.set_pixel(x, y, c_out if arch_edge else c_wood_hi)
+	return ImageTexture.create_from_image(img)
+
+func _create_window_frame_tile(is_lit: bool) -> ImageTexture:
+	var img := Image.create(16, 24, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	var c_top_hl := Color("#9aa1ab")
+	var c_top := Color("#6c727d")
+	var c_front := Color("#4a4f59")
+	var c_mortar := Color("#2b2f36")
+	var c_frame := Color("#5b3a22")
+	var c_sill := Color("#9a6b3f")
+
+	for x in range(16):
+		for y in range(3, 24):
+			if y == 3 or y == 11 or y == 23 or x == 0 or x == 15:
+				img.set_pixel(x, y, c_out)
+			elif y < 11:
+				img.set_pixel(x, y, c_top_hl if y <= 5 else c_top)
+			elif y >= 20:
+				img.set_pixel(x, y, c_mortar if y == 20 else c_front)
+			else:
+				img.set_pixel(x, y, c_front)
+
+	for x in range(3, 13):
+		for y in range(12, 20):
+			var is_border: bool = (x == 3 or x == 12 or y == 12 or y == 19)
+			var is_cross: bool = (x == 7 or x == 8 or y == 15)
+			if y == 19:
+				img.set_pixel(x, y, c_sill)
+			elif is_border or is_cross:
+				img.set_pixel(x, y, c_out if is_border else c_frame)
+			else:
+				if is_lit:
+					var glow := Color("#fff3b0") if (y <= 14 and x <= 6) else Color("#ffcc66")
+					img.set_pixel(x, y, glow)
+				else:
+					var glass := Color("#3b556e") if (x + y) % 2 == 0 else Color("#283b4f")
+					img.set_pixel(x, y, glass)
+	return ImageTexture.create_from_image(img)
+
+func _create_wall_pillar_tile() -> ImageTexture:
+	var img := Image.create(16, 24, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	var c_top_hl := Color("#9aa1ab")
+	var c_top := Color("#6c727d")
+	var c_front := Color("#4a4f59")
+	var c_shade := Color("#2b2f36")
+	for x in range(16):
+		for y in range(0, 24):
+			var edge: bool = (x == 0 or x == 15 or y == 0 or y == 23 or y == 9)
+			if edge:
+				img.set_pixel(x, y, c_out)
+			elif y < 9:
+				var inner: bool = (x >= 2 and x <= 11 and y >= 1 and y <= 5)
+				img.set_pixel(x, y, c_top_hl if inner else c_top)
+			else:
+				var seam: bool = (y == 14 or y == 19 or x == 2 or x == 13)
+				if seam:
+					img.set_pixel(x, y, c_shade)
+				else:
+					img.set_pixel(x, y, c_top if (y < 14 and x < 8) else (c_front if y < 19 else c_shade))
+	return ImageTexture.create_from_image(img)
+
+func _create_wall_stone_section_tile(v: int) -> ImageTexture:
+	var img := Image.create(16, 24, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	var c_top_hl := Color("#9aa1ab")
+	var c_top := Color("#6c727d")
+	var c_front := Color("#4a4f59")
+	var c_mortar := Color("#2b2f36")
+	var c_moss := Color("#3f5f32")
+
+	for x in range(16):
+		for y in range(3, 24):
+			if y == 3 or y == 11 or y == 23:
+				img.set_pixel(x, y, c_out)
+			elif y < 11:
+				var top_seam: bool = (x == (5 + v * 3) % 12 + 2)
+				img.set_pixel(x, y, c_mortar if top_seam else (c_top_hl if (y <= 5 and x < 12) else c_top))
+			elif y >= 19:
+				img.set_pixel(x, y, c_out if (y == 19 or x == 7) else c_mortar)
+			else:
+				var row_seam: bool = (y == 15)
+				var col_seam: bool = ((y < 15 and x == (3 + v * 3)) or (y > 15 and x == (11 - v * 2)))
+				if row_seam or col_seam:
+					img.set_pixel(x, y, c_mortar)
+				else:
+					var top_lit: bool = (y == 12 or (y == 16 and x < 9))
+					img.set_pixel(x, y, c_top if top_lit else c_front)
+
+	if v % 2 == 1:
+		img.set_pixel(4 + v * 2, 12, c_moss)
+		img.set_pixel(5 + v * 2, 12, c_moss)
+		img.set_pixel(4 + v * 2, 13, c_moss)
+	return ImageTexture.create_from_image(img)
+
+func _create_wall_wood_topped_tile() -> ImageTexture:
+	var img := Image.create(16, 24, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	var c_wood_hi := Color("#9a6b3f")
+	var c_wood_mid := Color("#7a5230")
+	var c_wood_dark := Color("#5b3a22")
+	var c_stone_base := Color("#4a4f59")
+
+	for x in range(16):
+		for y in range(3, 24):
+			if y == 3 or y == 9 or y == 17 or y == 23:
+				img.set_pixel(x, y, c_out)
+			elif y < 9:
+				img.set_pixel(x, y, c_out if (x % 8 == 0) else (c_wood_hi if y <= 5 else c_wood_mid))
+			elif y < 17:
+				var log_seam: bool = (x % 4 == 0)
+				img.set_pixel(x, y, c_out if log_seam else (c_wood_mid if (x % 4 == 1) else c_wood_dark))
+			else:
+				img.set_pixel(x, y, Color("#2b2f36") if (x == 8 or y > 20) else c_stone_base)
+	return ImageTexture.create_from_image(img)
+
+func _create_wall_side_tile() -> ImageTexture:
+	var img := Image.create(16, 24, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	var c_top_hl := Color("#9aa1ab")
+	var c_top := Color("#6c727d")
+	var c_side := Color("#4a4f59")
+	for x in range(16):
+		for y in range(2, 24):
+			if x == 0 or x == 15 or y == 2 or y == 23:
+				img.set_pixel(x, y, c_out)
+			elif x >= 11:
+				img.set_pixel(x, y, Color("#2b2f36") if (y % 6 == 0) else c_side)
+			else:
+				img.set_pixel(x, y, Color("#2b2f36") if (y % 8 == 0) else (c_top_hl if x <= 4 else c_top))
+	return ImageTexture.create_from_image(img)
+
+func _create_corner_tower_sprite() -> ImageTexture:
+	var img := Image.create(24, 34, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	var c_stone_l := Color("#9aa1ab")
+	var c_stone := Color("#6c727d")
+	var c_stone_d := Color("#4a4f59")
+	var c_mortar := Color("#2b2f36")
+	var c_wood := Color("#7a5230")
+
+	for x in range(1, 23):
+		for y in range(4, 34):
+			var edge: bool = (x == 1 or x == 22 or y == 4 or y == 33 or y == 14)
+			if edge:
+				img.set_pixel(x, y, c_out)
+			elif y < 14:
+				var inner: bool = (x >= 4 and x <= 19 and y >= 6 and y <= 12)
+				img.set_pixel(x, y, c_wood if inner else (c_stone_l if x < 14 else c_stone))
+			else:
+				var seam: bool = (y % 6 == 0 or (x + (y / 6) * 4) % 7 == 0)
+				var shade_right: bool = (x >= 16 or y >= 26)
+				img.set_pixel(x, y, c_mortar if seam else (c_stone_d if shade_right else c_stone))
+	for bx in [1, 9, 17]:
+		for x in range(bx, bx + 6):
+			for y in range(0, 5):
+				if x < 23:
+					var b_edge: bool = (x == bx or x == bx + 5 or y == 0)
+					img.set_pixel(x, y, c_out if b_edge else c_stone_l)
+	for y in range(18, 24):
+		img.set_pixel(7, y, c_out)
+		img.set_pixel(8, y, c_out)
+		img.set_pixel(15, y, c_out)
+		img.set_pixel(16, y, c_out)
+	return ImageTexture.create_from_image(img)
+
+func _create_bush_variant_tile(v: int) -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	var rx: int = 8 + (v % 2) - 1
+	var rad: int = 5 if v == 1 else 6
+	for x in range(1, 15):
+		for y in range(3, 15):
+			var d: int = abs(x - rx) + abs(y - 9) + ((x * 3 + y + v) % 2)
+			if d == rad or (y == 14 and abs(x - rx) <= rad - 1):
+				img.set_pixel(x, y, c_out)
+			elif d < rad and y < 14:
+				var col := Color("#6f8f4c") if (y < 7 and x < rx + 1) else (Color("#4d6d37") if y < 10 else Color("#2f4526"))
+				img.set_pixel(x, y, col)
+	if v % 2 == 0:
+		img.set_pixel(6, 7, Color("#d9443b"))
+		img.set_pixel(10, 8, Color("#d9443b"))
+	elif v == 3:
+		img.set_pixel(7, 8, Color("#e8b84b"))
+		img.set_pixel(9, 7, Color("#e8b84b"))
+	return ImageTexture.create_from_image(img)
+
+func _create_flowers_variant_tile(v: int) -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var layouts := [
+		[Vector2i(5, 6), Vector2i(10, 7), Vector2i(7, 11)],
+		[Vector2i(4, 9), Vector2i(9, 5), Vector2i(11, 11)],
+		[Vector2i(6, 5), Vector2i(11, 8), Vector2i(5, 11), Vector2i(9, 12)],
+		[Vector2i(4, 6), Vector2i(8, 8), Vector2i(12, 6)]
+	]
+	var pts: Array = layouts[v % layouts.size()]
+	var petals := [Color("#f2f5f8"), Color("#ffcc66"), Color("#b882eb"), Color("#e87a7a")]
+	for i in range(pts.size()):
+		var p: Vector2i = pts[i]
+		img.set_pixel(p.x, p.y + 1, Color("#2f4526"))
+		var petal: Color = petals[(i + v) % petals.size()]
+		img.set_pixel(p.x - 1, p.y, petal)
+		img.set_pixel(p.x + 1, p.y, petal)
+		img.set_pixel(p.x, p.y - 1, petal)
+		img.set_pixel(p.x, p.y, Color("#ffcc66") if petal != Color("#ffcc66") else Color("#d96b27"))
+	return ImageTexture.create_from_image(img)
+
+func _create_rock_variant_tile(v: int) -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	var cx: int = 8 + (v % 3) - 1
+	var w_rad: int = 6 - (v % 2)
+	for x in range(2, 14):
+		for y in range(5, 14):
+			var d: int = abs(x - cx) + abs(y - 10)
+			if d == w_rad or (y == 13 and abs(x - cx) < w_rad):
+				img.set_pixel(x, y, c_out)
+			elif d < w_rad:
+				var col := Color("#9aa1ab") if (y < 8 and x < cx + 1) else (Color("#6c727d") if y < 11 else Color("#4a4f59"))
+				img.set_pixel(x, y, col)
+	if v != 2:
+		img.set_pixel(cx - 2, 12, Color("#3f5f32"))
+		img.set_pixel(cx - 1, 12, Color("#3f5f32"))
+	return ImageTexture.create_from_image(img)
+
+func _create_stump_tile() -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	for x in range(3, 13):
+		for y in range(5, 14):
+			if x == 3 or x == 12 or y == 5 or y == 13:
+				img.set_pixel(x, y, c_out)
+			elif y <= 8:
+				img.set_pixel(x, y, Color("#9a6b3f") if (x + y) % 2 == 0 else Color("#7a5230"))
+			else:
+				img.set_pixel(x, y, Color("#5b3a22") if x < 8 else Color("#3b2516"))
+	return ImageTexture.create_from_image(img)
+
+func _create_fallen_log_tile() -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	for x in range(1, 15):
+		for y in range(6, 13):
+			if x == 1 or x == 14 or y == 6 or y == 12:
+				img.set_pixel(x, y, c_out)
+			elif x == 2:
+				img.set_pixel(x, y, Color("#9a6b3f"))
+			else:
+				img.set_pixel(x, y, Color("#3f5f32") if (y == 7 and x >= 6 and x <= 10) else (Color("#7a5230") if y < 9 else Color("#3b2516")))
+	return ImageTexture.create_from_image(img)
+
+func _create_well_tile() -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	for x in range(1, 15):
+		for y in range(2, 15):
+			var d: int = abs(x - 8) + abs(y - 9)
+			if d == 6 or d == 5:
+				img.set_pixel(x, y, Color("#171412") if d == 6 else (Color("#9aa1ab") if y < 9 else Color("#4a4f59")))
+			elif d < 5:
+				img.set_pixel(x, y, Color("#1d3e59") if y > 8 else Color("#2d5d82"))
+	for x in range(2, 14):
+		img.set_pixel(x, 2, Color("#7a5230"))
+		img.set_pixel(x, 3, Color("#5b3a22"))
+	return ImageTexture.create_from_image(img)
+
+func _create_campfire_tile(frame: int) -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	for x in range(2, 14):
+		for y in range(9, 15):
+			var d: int = abs(x - 8) + abs(y - 12)
+			if d == 5:
+				img.set_pixel(x, y, Color("#4a4f59"))
+			elif d < 5:
+				img.set_pixel(x, y, Color("#5b3a22") if (x + y) % 2 == 0 else Color("#3b2516"))
+	var top_shift: int = (frame % 3) - 1
+	for x in range(5, 11):
+		for y in range(4, 12):
+			var d: int = abs(x - 8) + max(0, (9 - y) / 2)
+			if d <= 3:
+				var col := Color("#ff7b29")
+				if y >= 7 and abs(x - 8) <= 1:
+					col = Color("#fff3b0")
+				elif y >= 5 and abs(x - 8 - top_shift) <= 1:
+					col = Color("#ffb35a")
+				img.set_pixel(x, y, col)
+	img.set_pixel(8 + top_shift, 3, Color("#ffcc66"))
+	return ImageTexture.create_from_image(img)
+
+func _create_crate_tile() -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	for x in range(2, 14):
+		for y in range(2, 14):
+			var edge: bool = (x == 2 or x == 13 or y == 2 or y == 13 or y == 6)
+			var diag: bool = (x == y and y > 6)
+			var col := Color("#9a6b3f") if y < 6 else (Color("#5b3a22") if (diag or x > 10) else Color("#7a5230"))
+			img.set_pixel(x, y, c_out if edge else col)
+	return ImageTexture.create_from_image(img)
+
+func _create_workbench_tile() -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	for x in range(1, 15):
+		for y in range(3, 15):
+			if y < 9:
+				var edge: bool = (x == 1 or x == 14 or y == 3 or y == 8)
+				img.set_pixel(x, y, c_out if edge else (Color("#9a6b3f") if y % 2 == 0 else Color("#7a5230")))
+			elif x in [2, 3, 12, 13]:
+				img.set_pixel(x, y, c_out if (x == 2 or x == 13 or y == 14) else Color("#5b3a22"))
+	img.set_pixel(5, 5, Color("#9aa1ab"))
+	img.set_pixel(6, 5, Color("#9aa1ab"))
+	img.set_pixel(10, 6, Color("#ffcc66"))
+	return ImageTexture.create_from_image(img)
+
+func _create_barrel_tile() -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#171412")
+	for x in range(3, 13):
+		for y in range(2, 15):
+			var edge: bool = (x == 3 or x == 12 or y == 2 or y == 14 or y == 6)
+			var hoop: bool = (y == 8 or y == 12)
+			if edge:
+				img.set_pixel(x, y, c_out)
+			elif hoop:
+				img.set_pixel(x, y, Color("#4a4f59"))
+			else:
+				img.set_pixel(x, y, Color("#7a5230") if x < 8 else Color("#5b3a22"))
+	return ImageTexture.create_from_image(img)
+
+func _create_procedural_pine_texture(snowy: bool, variant: int = 0) -> ImageTexture:
 	var w: int = 32
 	var h: int = 44
 	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
-	var outline := Color("#0f1419")
-	var trunk_c := Color("#422c1d")
-	var c_dark := Color("#16281e") if not snowy else Color("#3e5466")
-	var c_mid := Color("#213d2b") if not snowy else Color("#6e879c")
-	var c_light := Color("#2f5439") if not snowy else Color("#d8e4f0")
+	var outline := Color("#141210")
+	var trunk_c := Color("#4f311c")
+
+	var palettes := [
+		[Color("#1d2e18"), Color("#2c4223"), Color("#3e5930"), Color("#587a42")],
+		[Color("#172619"), Color("#243b27"), Color("#335236"), Color("#4b704d")],
+		[Color("#243018"), Color("#364724"), Color("#4a5e32"), Color("#688246")],
+		[Color("#1a2916"), Color("#283d22"), Color("#38542e"), Color("#507340")]
+	]
+	var pal: Array = palettes[variant % palettes.size()]
+	var c_dark: Color = pal[0] if not snowy else Color("#364959")
+	var c_mid: Color = pal[1] if not snowy else Color("#6e879c")
+	var c_light: Color = pal[2] if not snowy else Color("#cfe0f0")
+	var c_rim: Color = pal[3] if not snowy else Color("#f2f7fc")
 
 	for x in range(13, 19):
-		for y in range(34, 43):
+		for y in range(33, 43):
 			img.set_pixel(x, y, outline if (x == 13 or x == 18 or y == 42) else trunk_c)
 
+	var top_shift: int = (variant % 3) * 2
+	var width_mod: int = -1 if variant == 1 else (1 if variant == 2 else 0)
 	var tiers := [
-		{"top": 2, "bot": 15, "max_r": 7},
-		{"top": 9, "bot": 23, "max_r": 10},
-		{"top": 17, "bot": 31, "max_r": 13},
-		{"top": 24, "bot": 37, "max_r": 14}
+		{"top": 2 + top_shift, "bot": 15 + top_shift / 2, "max_r": 7 + width_mod},
+		{"top": 9 + top_shift / 2, "bot": 23, "max_r": 10 + width_mod},
+		{"top": 17, "bot": 31, "max_r": 13 + width_mod},
+		{"top": 24, "bot": 37, "max_r": 14 + width_mod}
 	]
 	for t in tiers:
 		var top_y: int = int(t["top"])
 		var bot_y: int = int(t["bot"])
 		var max_r: int = int(t["max_r"])
 		for y in range(top_y, bot_y + 1):
-			var prog: float = float(y - top_y) / float(bot_y - top_y)
-			var jag: int = ((y * 7) % 3) - 1
+			var prog: float = float(y - top_y) / float(maxi(1, bot_y - top_y))
+			var jag: int = ((y * 7 + variant * 3) % 3) - 1
 			var half_w: int = clampi(int(round(prog * float(max_r))) + jag, 1, 15)
 			for x in range(16 - half_w, 16 + half_w + 1):
 				var is_edge: bool = (x == 16 - half_w or x == 16 + half_w or y == bot_y)
 				if is_edge:
 					img.set_pixel(x, y, outline)
 				else:
-					var h_val: int = ((x * 19 + y * 37) % 10)
 					var col := c_mid
-					if y < top_y + 4 or (x < 15 and h_val < 4):
+					if y < top_y + 3 and x < 15:
+						col = c_rim
+					elif y < top_y + 6 and x < 17:
 						col = c_light
-					elif y > bot_y - 3 or x > 17 or h_val > 6:
+					elif y > bot_y - 4 or x > 17:
 						col = c_dark
 					img.set_pixel(x, y, col)
 	return ImageTexture.create_from_image(img)
+
+func _create_procedural_oak_texture(variant: int = 0, snowy: bool = false) -> ImageTexture:
+	var w: int = 32
+	var h: int = 42
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	var c_out := Color("#141210")
+	var c_trunk := Color("#54351e")
+
+	var palettes := [
+		[Color("#23361c"), Color("#334d28"), Color("#466637"), Color("#638a4c")],
+		[Color("#2b3619"), Color("#3f4f24"), Color("#566b32"), Color("#789146")],
+		[Color("#1d3320"), Color("#2b4a2e"), Color("#3b633e"), Color("#548556")],
+		[Color("#333019"), Color("#4a4523"), Color("#665e30"), Color("#877c41")]
+	]
+	var pal: Array = palettes[variant % palettes.size()]
+	var c_dark: Color = pal[0] if not snowy else Color("#3d4d5c")
+	var c_mid: Color = pal[1] if not snowy else Color("#72889c")
+	var c_light: Color = pal[2] if not snowy else Color("#d2e1f0")
+	var c_rim: Color = pal[3] if not snowy else Color("#f2f7fc")
+
+	for x in range(13, 19):
+		for y in range(27, 41):
+			img.set_pixel(x, y, c_out if (x == 13 or x == 18 or y == 40) else c_trunk)
+
+	var shift_x: int = (variant % 3) - 1
+	var blobs := [
+		Vector3(16 + shift_x, 14, 11),
+		Vector3(10, 19 - (variant % 2), 8),
+		Vector3(22, 18 + (variant % 2), 8),
+		Vector3(12 - shift_x, 11, 7),
+		Vector3(20 + shift_x, 12, 7)
+	]
+	for x in range(2, 30):
+		for y in range(3, 30):
+			var min_norm: float = 99.0
+			for b in blobs:
+				var d: float = Vector2(x - b.x, y - b.y).length() / b.z
+				if d < min_norm:
+					min_norm = d
+			if min_norm <= 1.05:
+				if min_norm > 0.88:
+					img.set_pixel(x, y, c_out)
+				elif y < 11 and x < 17:
+					img.set_pixel(x, y, c_rim)
+				elif y < 16 and x < 20:
+					img.set_pixel(x, y, c_light)
+				elif y > 20 or x > 19:
+					img.set_pixel(x, y, c_dark)
+				else:
+					img.set_pixel(x, y, c_mid)
+	return ImageTexture.create_from_image(img)
+
+func _generate_hotbar_icons() -> void:
+	tex_hotbar_icons.clear()
+	for idx in range(10):
+		var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+		var c_wood := Color("#8c5830")
+		var c_steel := Color("#9aa6b5")
+		var c_steel_hl := Color("#d0dae6")
+		match idx:
+			0:
+				for i in range(4, 13):
+					img.set_pixel(i, 15 - i, c_wood)
+					img.set_pixel(i + 1, 15 - i, Color("#5c381c"))
+				for x in range(10, 14):
+					for y in range(2, 6):
+						img.set_pixel(x, y, Color("#ffcc66") if (x + y) % 2 == 0 else Color("#ffb35a"))
+			1:
+				for i in range(3, 13):
+					img.set_pixel(i, 15 - i, c_wood)
+				for x in range(8, 14):
+					for y in range(2, 8):
+						if x - y >= 3:
+							img.set_pixel(x, y, c_steel_hl if x == 13 else c_steel)
+			2:
+				for i in range(3, 13):
+					img.set_pixel(i, 15 - i, c_wood)
+				for k in range(-3, 4):
+					img.set_pixel(10 + k, 5 + abs(k) / 2, c_steel_hl)
+					img.set_pixel(10 + k, 6 + abs(k) / 2, c_steel)
+			3:
+				for i in range(2, 11):
+					img.set_pixel(i, 15 - i, c_wood)
+				for i in range(10, 14):
+					img.set_pixel(i, 15 - i, c_steel_hl)
+					img.set_pixel(i - 1, 15 - i, c_steel)
+			4:
+				for i in range(4, 13):
+					img.set_pixel(i, i, c_wood)
+				for k in range(-4, 5):
+					img.set_pixel(6 - k / 2, 6 + k, c_steel)
+			5:
+				for x in range(4, 12):
+					for y in range(5, 12):
+						if abs(x - 8) + abs(y - 8) <= 4:
+							img.set_pixel(x, y, Color("#4a4f59") if (x + y) % 2 == 0 else Color("#2b2f36"))
+			6:
+				for x in range(3, 13):
+					for y in range(4, 12):
+						img.set_pixel(x, y, Color("#3b2516") if (y == 7 or y == 11) else c_wood)
+			7:
+				for x in range(3, 13):
+					for y in range(5, 13):
+						if abs(x - 8) + abs(y - 9) <= 5:
+							img.set_pixel(x, y, c_steel if y < 8 else Color("#6c727d"))
+			8:
+				for y in range(6, 13):
+					img.set_pixel(8, y, Color("#3d5a2e"))
+				for p in [Vector2i(6, 6), Vector2i(10, 6), Vector2i(8, 4), Vector2i(7, 8), Vector2i(9, 8)]:
+					img.set_pixel(p.x, p.y, Color("#5c99d6"))
+			9:
+				for y in range(5, 13):
+					img.set_pixel(8, y, Color("#4d6d37"))
+				img.set_pixel(6, 7, Color("#6f8f4c"))
+				img.set_pixel(7, 7, Color("#6f8f4c"))
+				img.set_pixel(9, 6, Color("#6f8f4c"))
+				img.set_pixel(10, 6, Color("#6f8f4c"))
+		var fb_icon := ImageTexture.create_from_image(img)
+		tex_hotbar_icons.append(ArtLoader.get_single("hotbar_%d" % idx, fb_icon))
 
 func _setup_procedural_audio() -> void:
 	sfx_player = AudioStreamPlayer.new()
@@ -415,20 +1149,56 @@ func _setup_procedural_audio() -> void:
 	sfx_playback = sfx_player.get_stream_playback() as AudioStreamGeneratorPlayback
 
 func play_sfx(kind: String) -> void:
-	if sfx_playback == null:
+	if sfx_playback == null or master_volume <= 0.01:
 		return
 	var rate: float = 22050.0
-	var samples: int = mini(2000, sfx_playback.get_frames_available())
+	var avail: int = sfx_playback.get_frames_available()
+	var want_samples: int = 1400
+	if kind == "ui":
+		want_samples = 650
+	elif kind == "item":
+		want_samples = 1100
+	elif kind == "build":
+		want_samples = 1600
+	elif kind == "hook" or kind == "blade":
+		want_samples = 1800
+	elif kind == "hit" or kind == "roar":
+		want_samples = 2400
+
+	var samples: int = mini(want_samples, avail)
 	for i in range(samples):
 		var t: float = float(i) / rate
-		var env: float = clampf(1.0 - (float(i) / float(samples)), 0.0, 1.0)
-		var sig: float = sin(TAU * 380.0 * t) * 0.2 * env
-		if kind == "hit" or kind == "roar":
-			sig = (sin(TAU * 110.0 * t) + randf_range(-0.5, 0.5)) * 0.32 * env
+		var prog: float = float(i) / float(maxi(1, samples))
+		var env: float = pow(clampf(1.0 - prog, 0.0, 1.0), 1.8)
+		var sig: float = 0.0
+
+		match kind:
+			"ui":
+				sig = sin(TAU * 210.0 * t) * 0.09 * env
+			"item":
+				var f_it: float = 280.0 if prog < 0.45 else 360.0
+				sig = sin(TAU * f_it * t) * 0.12 * env
+			"build":
+				var thud: float = sin(TAU * lerpf(155.0, 72.0, prog) * t) * 0.24
+				var wood_noise: float = randf_range(-0.18, 0.18) * (1.0 - prog)
+				sig = (thud + wood_noise) * env
+			"hook":
+				var f_hk: float = lerpf(240.0, 620.0, prog)
+				sig = (sin(TAU * f_hk * t) * 0.14 + randf_range(-0.08, 0.08)) * env
+			"blade":
+				var f_bl: float = lerpf(580.0, 190.0, prog)
+				sig = (sin(TAU * f_bl * t) * 0.15 + randf_range(-0.16, 0.16)) * env
+			"hit", "roar":
+				sig = (sin(TAU * 95.0 * t) + randf_range(-0.45, 0.45)) * 0.30 * env
+			_:
+				sig = sin(TAU * 240.0 * t) * 0.10 * env
+
+		sig *= master_volume
 		sfx_playback.push_frame(Vector2(sig, sig))
 
 func _setup_lighting() -> void:
 	sky_modulate = CanvasModulate.new()
+	sky_modulate.color = Phase1Visuals.sample_sky_color(game_hour, false)
 	add_child(sky_modulate)
 
 func _setup_world_layer() -> void:
@@ -442,168 +1212,284 @@ func _setup_world_layer() -> void:
 	fx_layer.draw.connect(func(): _draw_roof_and_chimney_smoke(fx_layer))
 	add_child(fx_layer)
 
-# СТРОИМ КРЕПОСТЬ С ДОРОЖКАМИ МЕЖДУ ПОСТРОЙКАМИ, ВЫТОПТАННЫМ ДВОРОМ, КУСТАМИ И ВАЛУНАМИ
 func _generate_fortress_from_reference() -> void:
 	for x in range(-MAP_RADIUS, MAP_RADIUS + 1):
 		for y in range(-MAP_RADIUS, MAP_RADIUS + 1):
-			var c := Vector2i(x, y)
-			ground_map[c] = 5 if y < -26 else 0
+			ground_map[Vector2i(x, y)] = 0
 
-			# Редкие кусты и камни на траве (Пункт 3: не забиваем каждый пиксель, только ~6% клеток!)
-			var h_val: int = abs((x * 73856093) ^ (y * 19349663)) % 100
-			if (x < -16 or x > 15 or y < -14 or y > 8) and h_val < 5:
-				decor_map[c] = "bush" if h_val < 3 else "rock"
+	for x in range(-14, 14):
+		for y in range(-12, 7):
+			var around_house: bool = (x >= -13 and x <= -4 and y >= -11 and y <= -3)
+			var around_work: bool = (x >= -3 and x <= 5 and y >= -2 and y <= 4)
+			var n_val: float = Phase1Visuals.ground_noise.get_noise_2d(float(x) * 6.5, float(y) * 6.5)
+			if around_house or (around_work and n_val > -0.15) or (y == 6 and abs(x) <= 4):
+				ground_map[Vector2i(x, y)] = 1
 
-	# Внутри крепости: трава по краям, вытоптанная земля около дома (-12..-3, -6..0) и КАМЕННЫЕ ДОРОЖКИ между постройками!
-	for x in range(-12, -2):
-		for y in range(-6, 1):
-			ground_map[Vector2i(x, y)] = 1 # Вытоптанная площадка перед крыльцом дома
-
-	# Каменная дорожка от крыльца дома (-9, -5) к колодцу, огороду (5, -4) и южным воротам (0, 7)
-	for y in range(-5, 3):
+	for y in range(-5, 7):
 		ground_map[Vector2i(-9, y)] = 4
+		ground_map[Vector2i(0, y)] = 4
+	for y in range(-12, -1):
+		ground_map[Vector2i(0, y)] = 4
 	for x in range(-9, 6):
 		ground_map[Vector2i(x, -2)] = 4
-	for y in range(-2, 8):
-		ground_map[Vector2i(0, y)] = 4
 
-	# Кусты и камни во дворе крепости (в углах у стен)
-	decor_map[Vector2i(-13, 4)] = "bush"
-	decor_map[Vector2i(-12, 5)] = "rock"
-	decor_map[Vector2i(11, -11)] = "bush"
-	decor_map[Vector2i(12, 4)] = "bush"
-	decor_map[Vector2i(3, -10)] = "rock"
-
-	# Каменный периметр стены
 	for x in range(-15, 15):
-		if abs(x) > 1:
-			_set_block(Vector2i(x, -13), 4, false)
-			_set_block(Vector2i(x, 7), 4, false)
-		else:
+		if x in [-1, 0, 1]:
+			_set_block(Vector2i(x, -13), 6, false)
 			_set_block(Vector2i(x, 7), 6, false)
-	for y in range(-13, 8):
-		_set_block(Vector2i(-15, y), 4, false)
-		_set_block(Vector2i(14, y), 4, false)
+		elif x in [-15, -11, -7, -3, 3, 7, 11, 14]:
+			_set_block(Vector2i(x, -13), 3, false)
+			_set_block(Vector2i(x, 7), 3, false)
+		else:
+			var is_wood_span: bool = (abs(x) >= 8 and abs(x) <= 10)
+			var sec_id: int = 1 if is_wood_span else 4
+			_set_block(Vector2i(x, -13), sec_id, false)
+			_set_block(Vector2i(x, 7), sec_id, false)
 
-	# Главный жилой дом (-13..-5, -11..-6)
+	for y in range(-13, 8):
+		var is_side_pillar: bool = (y in [-13, -9, -5, -1, 3, 7])
+		var side_id: int = 3 if is_side_pillar else 4
+		_set_block(Vector2i(-15, y), side_id, false)
+		_set_block(Vector2i(14, y), side_id, false)
+
 	for x in range(-13, -4):
 		for y in range(-11, -5):
 			ground_map[Vector2i(x, y)] = 2
 			var border: bool = (x == -13 or x == -5 or y == -11 or y == -6)
-			if border and Vector2i(x, y) != Vector2i(-9, -6):
-				_set_block(Vector2i(x, y), 2, false)
-	_set_block(Vector2i(-9, -6), 6, false)
+			if border:
+				var c := Vector2i(x, y)
+				if c == Vector2i(-9, -6):
+					_set_block(c, 6, false)
+				elif (y == -6 and (x == -11 or x == -7)) or (y == -9 and (x == -13 or x == -5)):
+					_set_block(c, 9, false)
+				elif (x == -13 or x == -5) and (y == -11 or y == -6):
+					_set_block(c, 3, false)
+				else:
+					_set_block(c, 2, false)
 
-	# Огород 4x3
-	for gx in range(5, 10):
-		for gy in range(-7, -3):
+	for gx in range(4, 11):
+		for gy in range(-8, -4):
+			if gx != 7:
+				ground_map[Vector2i(gx, gy)] = 3
+	for gx in range(7, 12):
+		for gy in range(2, 5):
 			ground_map[Vector2i(gx, gy)] = 3
 
-	# Еловый лес снаружи стен
-	for x in range(-50, 52, 4):
-		for y in range(-45, 45, 4):
-			if x >= -18 and x <= 17 and y >= -17 and y <= 11:
-				continue
-			var tx: int = x + ((y * 5) % 2)
-			var ty: int = y + ((x * 7) % 2)
-			if (abs(tx * 13 + ty * 7) % 10) < 6:
-				_set_block(Vector2i(tx, ty), 8, false)
-				decor_map.erase(Vector2i(tx, ty))
+	var courtyard_clusters := [
+		{ "pos": Vector2i(11, -11), "kind": "tent" },
+		{ "pos": Vector2i(-13, -5), "kind": "woodpile" },
+		{ "pos": Vector2i(-12, -5), "kind": "woodpile" },
+		{ "pos": Vector2i(-4, -8), "kind": "woodpile" },
+		{ "pos": Vector2i(-3, -4), "kind": "sawhorse" },
+		{ "pos": Vector2i(-2, 4), "kind": "cart" },
+		{ "pos": Vector2i(-13, -3), "kind": "barrel" },
+		{ "pos": Vector2i(-4, -5), "kind": "barrel" },
+		{ "pos": Vector2i(-11, -10), "kind": "barrel" },
+		{ "pos": Vector2i(-13, 3), "kind": "bush" },
+		{ "pos": Vector2i(-12, 4), "kind": "flowers" },
+		{ "pos": Vector2i(-13, 5), "kind": "rock" },
+		{ "pos": Vector2i(-11, 5), "kind": "stump" },
+		{ "pos": Vector2i(-6, 5), "kind": "log" },
+		{ "pos": Vector2i(2, -11), "kind": "bush" },
+		{ "pos": Vector2i(3, -11), "kind": "rock" },
+		{ "pos": Vector2i(12, -8), "kind": "barrel" },
+		{ "pos": Vector2i(12, -2), "kind": "bush" },
+		{ "pos": Vector2i(13, -1), "kind": "rock" },
+		{ "pos": Vector2i(12, 5), "kind": "bush" },
+		{ "pos": Vector2i(6, 5), "kind": "flowers" }
+	]
+	for cl in courtyard_clusters:
+		decor_map[cl["pos"]] = cl["kind"]
 
+	Phase1Visuals.populate_dense_forest(self, MAP_RADIUS)
+	BuildSystem.rebuild_all_autowalls(self)
+	rebuild_ground_tint_cache()
+
+	loot_crates[Vector2i(-6, -10)] = ["canned_food", "bandage", "wood"]
 	loot_crates[Vector2i(11, -9)] = ["wood", "wood", "stone", "canned_food"]
-	loot_crates[Vector2i(-12, 2)] = ["raw_meat", "herbs", "scrap", "wood"]
-	loot_crates[Vector2i(9, 3)] = ["canned_food", "cloth", "wood", "stone"]
+	loot_crates[Vector2i(-4, 1)] = ["raw_meat", "herbs", "scrap", "wood"]
+	loot_crates[Vector2i(3, 2)] = ["canned_food", "cloth", "wood", "stone"]
+
+func rebuild_ground_tint_cache() -> void:
+	_ground_tint_cache.clear()
+	_grass_variant_cache.clear()
+	var noise_ref: FastNoiseLite = Phase1Visuals.macro_patch_noise if Phase1Visuals.macro_patch_noise != null else Phase1Visuals.ground_noise
+	var g_count: int = maxi(1, tex_grass_variants.size())
+
+	for x in range(-MAP_RADIUS, MAP_RADIUS + 1):
+		for y in range(-MAP_RADIUS, MAP_RADIUS + 1):
+			var c := Vector2i(x, y)
+			var macro_n: float = noise_ref.get_noise_2d(float(x) * 3.0, float(y) * 3.0) if noise_ref != null else 0.0
+			var base_tint := Color(1.0 + macro_n * 0.04, 1.0 + macro_n * 0.03, 1.0 - macro_n * 0.03, 1.0)
+			_ground_tint_cache[c] = base_tint * _compute_cell_warmth(c)
+			_grass_variant_cache[c] = Phase1Visuals.sample_grass_variant(c, g_count)
+
+func _compute_cell_warmth(cell: Vector2i) -> Color:
+	var warmth: float = 0.0
+	for fc in campfires:
+		var d: float = Vector2(cell).distance_to(Vector2(fc))
+		if d < 4.2:
+			warmth = maxf(warmth, (1.0 - d / 4.2) * 0.14)
+	for tc in wall_torches:
+		var dt: float = Vector2(cell).distance_to(Vector2(tc))
+		if dt < 3.0:
+			warmth = maxf(warmth, (1.0 - dt / 3.0) * 0.10)
+	return Color(1.0 + warmth * 0.65, 1.0 + warmth * 0.25, 1.0 - warmth * 0.20, 1.0)
+
+func _sample_surface_warmth(cell: Vector2i) -> Color:
+	return _ground_tint_cache.get(cell, Color.WHITE)
 
 func _set_block(cell: Vector2i, b_id: int, recalc_support: bool = true) -> void:
 	var b_info: Dictionary = blocks_db.get(str(b_id), {"hp": 30, "solid": true})
-	if not bool(b_info.get("solid", true)):
-		ground_map[cell] = 2
+	var is_solid: bool = bool(b_info.get("solid", true))
+	if not is_solid:
+		var floor_type: int = int(b_info.get("floor_type", 7 if b_id == 10 else 2))
+		ground_map[cell] = floor_type
+		decor_map.erase(cell)
+		if recalc_support:
+			BuildSystem.mark_rooms_dirty()
 		queue_redraw()
 		return
 
 	_remove_wall(cell, false)
+	decor_map.erase(cell)
 	var body := StaticBody2D.new()
 	body.position = Vector2(cell * CELL_SIZE) + Vector2(8, 8)
 	var col := CollisionShape2D.new()
 	var rect := RectangleShape2D.new()
-	rect.size = Vector2(CELL_SIZE, CELL_SIZE)
+	rect.size = Vector2(10, 10) if b_id == 8 else Vector2(CELL_SIZE, CELL_SIZE)
 	col.shape = rect
 	body.add_child(col)
 	world_canvas.add_child(body)
 
 	wall_map[cell] = {
 		"id": b_id,
-		"hp": int(b_info.get("hp", 30)),
-		"max_hp": int(b_info.get("hp", 30)),
+		"hp": int(b_info.get("hp", 36 if b_id == 8 else 30)),
+		"max_hp": int(b_info.get("hp", 36 if b_id == 8 else 30)),
 		"is_door": bool(b_info.get("is_door", false)),
+		"is_window": (b_id == 9 or bool(b_info.get("is_window", false))),
+		"lets_light": (b_id == 9 or bool(b_info.get("lets_light", false))),
 		"door_open": false,
 		"hookable": bool(b_info.get("hookable", true)),
 		"drop": str(b_info.get("drop", "wood")),
 		"body": body,
 		"col": col
 	}
-	if recalc_support and (b_id == 4 or b_id == 2 or b_id == 1):
-		core_stones_placed = mini(5, core_stones_placed + 1)
+	if recalc_support:
+		BuildSystem.update_autowall_around(self, cell)
+		if b_id == 4 or b_id == 2 or b_id == 1 or b_id == 3 or b_id == 9:
+			core_stones_placed = mini(5, core_stones_placed + 1)
 	queue_redraw()
 
-func _remove_wall(cell: Vector2i, _recalc_support: bool = true) -> void:
+func _remove_wall(cell: Vector2i, recalc_support: bool = true) -> void:
 	if wall_map.has(cell):
-		var body: StaticBody2D = wall_map[cell].get("body")
-		if is_instance_valid(body):
-			body.queue_free()
+		if is_instance_valid(col_or_body(cell)):
+			wall_map[cell]["body"].queue_free()
 		wall_map.erase(cell)
+		if recalc_support:
+			BuildSystem.update_autowall_around(self, cell)
 		queue_redraw()
+
+func col_or_body(cell: Vector2i) -> Node:
+	return wall_map.get(cell, {}).get("body", null)
+
+func place_station_near_player(st_kind: String) -> bool:
+	var ok: bool = BuildSystem.place_station_near_player(self, st_kind)
+	if ok and st_kind == "campfire":
+		rebuild_ground_tint_cache()
+	return ok
+
+func _is_window_room_lit(win_cell: Vector2i) -> bool:
+	if BuildSystem.is_cell_in_lit_room(self, win_cell):
+		return true
+	var p_cell: Vector2i = _world_to_cell(player.global_position)
+	if Vector2(p_cell).distance_to(Vector2(win_cell)) <= 4.5:
+		return true
+	return false
 
 func _setup_player() -> void:
 	player = PlayerController.new()
-	player.position = Vector2(-6 * CELL_SIZE, -1 * CELL_SIZE)
+	player.position = Vector2(-9 * CELL_SIZE + 8, -4 * CELL_SIZE)
 	player.world_ref = self
 	add_child(player)
 	player.apply_config(config)
-	player.surv.add_item("wood", 12)
-	player.surv.add_item("stone", 8)
+	player.surv.add_item("wood", 24)
+	player.surv.add_item("stone", 11)
+	player.surv.add_item("core_stone", 6)
+	player.surv.add_item("scrap", 4)
+	player.surv.add_item("canned_food", 2)
+	player.surv.add_item("clean_water", 2)
+	player.surv.add_item("bandage", 2)
 
 	player_light = PointLight2D.new()
 	player_light.texture = light_tex
-	player_light.texture_scale = 2.0
-	player_light.color = Color("#ffaa44")
-	player_light.energy = 0.25
+	player_light.texture_scale = 0.78
+	player_light.color = Color("#ffb35a")
+	player_light.energy = 0.42
 	player.add_child(player_light)
 
 	camera = Camera2D.new()
-	# КРУПНЫЕ ЧЁТКИЕ ПИКСЕЛИ (Пункт 1: Zoom 3.0x кратно пиксельной сетке!)
-	camera.zoom = Vector2(3.0, 3.0)
+	camera.zoom = Vector2(2.0, 2.0)
 	camera.position_smoothing_enabled = true
 	camera.position_smoothing_speed = 8.0
 	player.add_child(camera)
 
+# Умеренные масштабы и яркость источников света (под текстуру 256x256 — больше никакого пересвета!)
 func _spawn_campfire_point_lights() -> void:
 	for ch in campfire_lights:
 		if is_instance_valid(ch):
 			ch.queue_free()
 	campfire_lights.clear()
+	for ch in sconce_lights:
+		if is_instance_valid(ch):
+			ch.queue_free()
+	sconce_lights.clear()
+
 	for fc in campfires:
 		var pl := PointLight2D.new()
 		pl.position = Vector2(fc * CELL_SIZE) + Vector2(8, 8)
 		pl.texture = light_tex
-		pl.texture_scale = 2.2
-		pl.color = Color("#ff8c2b")
-		pl.energy = 0.45
+		pl.texture_scale = 0.88
+		pl.color = Color("#ffb35a")
+		pl.energy = 0.48
 		add_child(pl)
 		campfire_lights.append(pl)
 
+	for wx in [-11.0, -7.0]:
+		var wl := PointLight2D.new()
+		wl.position = Vector2(wx * float(CELL_SIZE) + 8.0, -6.0 * float(CELL_SIZE))
+		wl.texture = light_tex
+		wl.texture_scale = 0.65
+		wl.color = Color("#ffcc66")
+		wl.energy = 0.36
+		add_child(wl)
+		campfire_lights.append(wl)
+
+	for tc in wall_torches:
+		var tl := PointLight2D.new()
+		tl.position = Vector2(tc * CELL_SIZE) + Vector2(8, 4)
+		pl_setup_sconce(tl)
+		add_child(tl)
+		sconce_lights.append(tl)
+
+func pl_setup_sconce(tl: PointLight2D) -> void:
+	tl.texture = light_tex
+	tl.texture_scale = 0.72
+	tl.color = Color("#ffb35a")
+	tl.energy = 0.34
+
 func _spawn_initial_colonists() -> void:
 	var list: Array = [
-		{ "name": "Анна", "prof": "Врач", "trait": "Целитель", "role": "cook_med", "x": -7, "y": -8 },
-		{ "name": "Борн", "prof": "Плотник", "trait": "Мастер", "role": "gather", "x": 1, "y": 0 },
-		{ "name": "Ворон", "prof": "Солдат", "trait": "Смелый", "role": "guard", "x": 4, "y": 2 }
+		{ "name": "Анна", "prof": "Врач", "trait": "Целитель", "role": "cook_med", "x": -7, "y": -3, "hx": -8, "hy": -4 },
+		{ "name": "Борн", "prof": "Плотник", "trait": "Мастер", "role": "gather", "x": 1, "y": -2, "hx": 2, "hy": -3 },
+		{ "name": "Ворон", "prof": "Солдат", "trait": "Смелый", "role": "guard", "x": 4, "y": 2, "hx": 0, "hy": 4 }
 	]
 	for item in list:
 		var c := ColonistEntity.new()
 		c.position = Vector2(float(item["x"]) * CELL_SIZE, float(item["y"]) * CELL_SIZE)
 		c.world_ref = self
 		c.player_ref = player
-		c.home_pos = Vector2(-2 * CELL_SIZE, 0)
+		c.home_pos = Vector2(float(item["hx"]) * CELL_SIZE, float(item["hy"]) * CELL_SIZE)
 		c.setup_profile(str(item["name"]), str(item["prof"]), str(item["trait"]), str(item["role"]), true)
 		colonists_layer.add_child(c)
 
@@ -626,10 +1512,10 @@ func colonist_shoot_nearest_titan(origin: Vector2, max_range: float, dmg: float)
 	return {"hit": false}
 
 func _spawn_initial_titans() -> void:
-	spawn_titan_at(Vector2(-8 * CELL_SIZE, -16 * CELL_SIZE), "wanderer")
-	spawn_titan_at(Vector2(8 * CELL_SIZE, -16 * CELL_SIZE), "wanderer")
-	spawn_titan_at(Vector2(19 * CELL_SIZE, -2 * CELL_SIZE), "wanderer")
-	spawn_titan_at(Vector2(-19 * CELL_SIZE, 2 * CELL_SIZE), "crawler")
+	spawn_titan_at(Vector2(-1 * CELL_SIZE, -17 * CELL_SIZE), "wanderer")
+	spawn_titan_at(Vector2(19 * CELL_SIZE, -8 * CELL_SIZE), "wanderer")
+	spawn_titan_at(Vector2(8 * CELL_SIZE, 14 * CELL_SIZE), "wanderer")
+	spawn_titan_at(Vector2(-21 * CELL_SIZE, 2 * CELL_SIZE), "crawler")
 
 func spawn_titan_at(pos: Vector2, p_type: String) -> void:
 	var t := TitanEntity.new()
@@ -658,14 +1544,82 @@ func player_slash_attack(origin: Vector2, _look_dir: Vector2, speed: float, base
 	var best_res := {"hit": false}
 	for child in titans_layer.get_children():
 		if child is TitanEntity and child.state != TitanEntity.State.DYING:
-			if origin.distance_to(child.global_position) <= 40.0:
+			if origin.distance_to(child.global_position) <= 46.0:
 				var res: Dictionary = child.take_blade_hit(origin, speed, base_dmg, max_spd)
 				if bool(res.get("hit", false)):
 					best_res = res
-					screen_shake_amount = 5.0
+					if screen_shake_enabled:
+						screen_shake_amount = 5.0
 					play_sfx("hit")
 					break
 	return best_res
+
+# НОВАЯ ФУНКЦИЯ РУБКИ ДЕРЕВЬЕВ И ДОБЫЧИ КАМНЯ / ТРАВ В ЛЕСУ
+func player_harvest_nearby(origin: Vector2, look_dir: Vector2) -> bool:
+	var p_cell: Vector2i = _world_to_cell(origin)
+	var step_dir := Vector2i(int(round(look_dir.x)), int(round(look_dir.y)))
+	if step_dir == Vector2i.ZERO:
+		step_dir = Vector2i(0, 1)
+
+	var active_tool_id: String = ""
+	if selected_hotbar_slot < combat_hotbar_slots.size():
+		active_tool_id = str(combat_hotbar_slots[selected_hotbar_slot].get("id", ""))
+
+	# Ищем ближайшее дерево или ресурсный объект перед героем и вокруг него
+	var check_cells: Array[Vector2i] = [
+		p_cell + step_dir,
+		p_cell + step_dir * 2,
+		p_cell + Vector2i(1, 0), p_cell + Vector2i(-1, 0),
+		p_cell + Vector2i(0, 1), p_cell + Vector2i(0, -1),
+		p_cell + Vector2i(1, 1), p_cell + Vector2i(-1, 1),
+		p_cell + Vector2i(1, -1), p_cell + Vector2i(-1, -1)
+	]
+
+	for c in check_cells:
+		# 1. Рубка дерева (b_id == 8)
+		if wall_map.has(c) and int(wall_map[c].get("id", 0)) == 8:
+			var dmg: int = 20 if active_tool_id == "axe" else 12
+			var cur_hp: int = int(wall_map[c].get("hp", 36)) - dmg
+			wall_map[c]["hp"] = cur_hp
+			play_sfx("build")
+			if screen_shake_enabled:
+				screen_shake_amount = 2.2
+			hit_sparks.append({"pos": Vector2(c * CELL_SIZE) + Vector2(8, 4), "timer": 0.22, "col": Color("#b88454")})
+			if cur_hp <= 0:
+				_remove_wall(c, false)
+				decor_map[c] = "stump"
+				player.surv.add_item("wood", 3 if active_tool_id == "axe" else 2)
+				play_sfx("item")
+			queue_redraw()
+			return true
+
+		# 2. Добыча валунов, пней, поваленных брёвен и кустов
+		if decor_map.has(c):
+			var kind: String = str(decor_map[c])
+			if kind == "rock":
+				decor_map.erase(c)
+				player.surv.add_item("stone", 2 if active_tool_id == "pickaxe" else 1)
+				if active_tool_id == "pickaxe" or randi() % 2 == 0:
+					player.surv.add_item("core_stone", 1)
+				hit_sparks.append({"pos": Vector2(c * CELL_SIZE) + Vector2(8, 8), "timer": 0.22, "col": Color("#9aa1ab")})
+				play_sfx("build")
+				queue_redraw()
+				return true
+			elif kind == "stump" or kind == "log":
+				decor_map.erase(c)
+				player.surv.add_item("wood", 2)
+				hit_sparks.append({"pos": Vector2(c * CELL_SIZE) + Vector2(8, 8), "timer": 0.22, "col": Color("#b88454")})
+				play_sfx("build")
+				queue_redraw()
+				return true
+			elif kind == "bush" or kind == "flowers":
+				decor_map.erase(c)
+				player.surv.add_item("herbs", 1)
+				play_sfx("item")
+				queue_redraw()
+				return true
+
+	return false
 
 func on_titan_killed(pos: Vector2) -> void:
 	ash_piles.append(pos)
@@ -688,9 +1642,15 @@ func _is_titan_nearby(radius_cells: float) -> bool:
 	return false
 
 func _process(delta: float) -> void:
+	_update_adaptive_hud_positions()
 	_update_game_clock_and_survival(delta)
 	_update_camera_shake(delta)
 	_update_cursor_and_input()
+	for i in range(hit_sparks.size() - 1, -1, -1):
+		hit_sparks[i]["timer"] = float(hit_sparks[i]["timer"]) - delta
+		if float(hit_sparks[i]["timer"]) <= 0.0:
+			hit_sparks.remove_at(i)
+	BuildSystem.update_roof_alphas(self, delta)
 	if fx_layer:
 		fx_layer.queue_redraw()
 	if hud_bars_ctrl:
@@ -701,6 +1661,37 @@ func _process(delta: float) -> void:
 		hotbar_ctrl.queue_redraw()
 	queue_redraw()
 
+func _update_adaptive_hud_positions() -> void:
+	var vp: Vector2 = get_viewport_rect().size
+	if vp.x <= 10.0 or vp.y <= 10.0:
+		return
+	if minimap_ctrl:
+		minimap_ctrl.position = Vector2(vp.x - minimap_ctrl.size.x - 14.0, 14.0)
+	if hotbar_ctrl:
+		hotbar_ctrl.size = Vector2(vp.x, BuildSystem.HOTBAR_HEIGHT)
+		hotbar_ctrl.position = Vector2(0.0, vp.y - BuildSystem.HOTBAR_HEIGHT - 6.0)
+	if alert_panel:
+		alert_panel.position = Vector2(vp.x - 262.0, 146.0)
+	if prompt_e_panel:
+		prompt_e_panel.position = Vector2((vp.x - 220.0) * 0.5, vp.y - BuildSystem.HOTBAR_HEIGHT - 78.0)
+
+func is_screen_point_on_ui(screen_pt: Vector2) -> bool:
+	var vp: Vector2 = get_viewport_rect().size
+	if (inv_panel and inv_panel.visible) or (settings_panel and settings_panel.visible):
+		return true
+	if screen_pt.y >= vp.y - (BuildSystem.HOTBAR_HEIGHT + 16.0):
+		var total_w: float = 10.0 * BuildSystem.HOTBAR_SLOT_W + 9.0 * BuildSystem.HOTBAR_GAP
+		var start_x: float = (vp.x - total_w) * 0.5
+		if screen_pt.x >= start_x - 12.0 and screen_pt.x <= start_x + total_w + 12.0:
+			return true
+	if screen_pt.x <= 360.0 and screen_pt.y <= 265.0:
+		return true
+	if minimap_ctrl and Rect2(minimap_ctrl.position, minimap_ctrl.size).grow(6.0).has_point(screen_pt):
+		return true
+	if mobile_hud and mobile_hud.is_point_on_mobile_controls(screen_pt):
+		return true
+	return false
+
 func _update_game_clock_and_survival(delta: float) -> void:
 	var sleep_mult: float = 6.0 if player.surv.is_sleeping else 1.0
 	var hours_passed: float = (delta / real_sec_per_hour) * time_scale_mult * sleep_mult
@@ -710,42 +1701,58 @@ func _update_game_clock_and_survival(delta: float) -> void:
 		game_day += 1
 
 	var is_night: bool = (game_hour >= 20.0 or game_hour < 5.5)
+	var is_dusk_or_dawn: bool = ((game_hour >= 17.5 and game_hour < 20.0) or (game_hour >= 5.0 and game_hour < 7.0))
 	var p_cell: Vector2i = _world_to_cell(player.global_position)
-	var inside_shelter: bool = (int(ground_map.get(p_cell, 0)) == 2)
+	var inside_shelter: bool = BuildSystem.is_player_inside_any_room(self)
 	var near_fire: bool = _is_near_station(campfires, 3.8)
 	var near_titan: bool = _is_titan_nearby(14.0)
-	var is_winter_zone: bool = (p_cell.y < -26 or current_weather == 3)
+	var is_winter_zone: bool = (current_weather == 3)
 
-	var target_light_energy: float = 1.15 if is_night else 0.25
+	var night_factor: float = clampf(Phase1Visuals.get_light_night_factor(game_hour), 0.0, 1.0)
+	var t_sec: float = float(Time.get_ticks_msec()) * 0.001
+
+	var p_flicker: float = 1.0 + sin(t_sec * 11.0) * 0.04
+	var base_p_energy: float = lerpf(0.22, 0.58, night_factor)
 	if is_instance_valid(player_light):
-		player_light.energy = lerpf(player_light.energy, target_light_energy, delta * 4.0)
-	for pl in campfire_lights:
+		player_light.energy = lerpf(player_light.energy, base_p_energy * p_flicker, delta * 8.0)
+
+	var base_cf_energy: float = lerpf(0.25, 0.62, night_factor)
+	for i in range(campfire_lights.size()):
+		var pl: PointLight2D = campfire_lights[i]
 		if is_instance_valid(pl):
-			pl.energy = lerpf(pl.energy, 1.2 if is_night else 0.4, delta * 4.0)
+			var f_mult: float = 1.0 + sin(t_sec * 9.5 + float(i) * 1.9) * 0.04
+			pl.energy = lerpf(pl.energy, base_cf_energy * f_mult, delta * 6.0)
+
+	var base_sc_energy: float = lerpf(0.18, 0.46, night_factor)
+	for i in range(sconce_lights.size()):
+		var sl: PointLight2D = sconce_lights[i]
+		if is_instance_valid(sl):
+			var f_mult: float = 1.0 + cos(t_sec * 10.5 + float(i) * 1.3) * 0.04
+			sl.energy = lerpf(sl.energy, base_sc_energy * f_mult, delta * 6.0)
 
 	player.surv.update_survival(delta, hours_passed, is_night, near_fire, inside_shelter, near_titan, 1.2, -12.0 if is_winter_zone else 0.0, false)
 
-	var target_mod := Color("#b5afa2")
-	var icon_str: String = "☀ День"
-	if is_winter_zone:
-		icon_str = "❄ Зима"
-		target_mod = Color("#a8b8cc")
-	elif game_hour >= 20.0 or game_hour < 5.5:
-		icon_str = "🌙 Ночь"
-		target_mod = Color("#182232")
+	var target_mod: Color = Phase1Visuals.sample_sky_color(game_hour, is_winter_zone)
+	sky_modulate.color = sky_modulate.color.lerp(target_mod, delta * 4.5)
 
-	sky_modulate.color = sky_modulate.color.lerp(target_mod, delta * 3.0)
+	var icon_str: String = "☀"
+	if is_winter_zone:
+		icon_str = "❄"
+	elif is_night:
+		icon_str = "🌙"
+	elif is_dusk_or_dawn:
+		icon_str = "🌅"
 
 	var hh: int = int(floor(game_hour))
 	var mm: int = int(floor((game_hour - float(hh)) * 60.0))
 	if lbl_day_clock:
-		lbl_day_clock.text = "%s · День %d\n%02d:%02d" % [icon_str, game_day, hh, mm]
+		lbl_day_clock.text = "День %d   %s\n%02d:%02d" % [game_day, icon_str, hh, mm]
 
 	if lbl_quest_list:
 		var q1_mark: String = "☑" if core_stones_placed >= 5 else "☐"
 		var w_cnt: int = int(player.surv.inventory.get("wood", 0))
 		var q2_mark: String = "☑" if w_cnt >= 10 else "☐"
-		lbl_quest_list.text = "%s Построить стену (%d/5)\n%s Собрать доски (%d/10)" % [
+		lbl_quest_list.text = "Задания:\n%s Построить стену (%d/5)\n%s Собрать доски (%d/10)" % [
 			q1_mark, core_stones_placed, q2_mark, mini(w_cnt, 10)
 		]
 
@@ -758,16 +1765,17 @@ func _update_game_clock_and_survival(delta: float) -> void:
 			lbl_prompt_e.text = "[E] Спать"
 		elif _is_near_station(workbenches, 2.5):
 			prompt_e_panel.visible = true
-			lbl_prompt_e.text = "[E] Верстак"
+			lbl_prompt_e.text = "[E] Открыть / Крафт"
 		else:
 			prompt_e_panel.visible = false
 
 func _update_camera_shake(delta: float) -> void:
-	if screen_shake_amount > 0.1:
+	if screen_shake_enabled and screen_shake_amount > 0.1:
 		camera.offset = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * screen_shake_amount
 		screen_shake_amount = move_toward(screen_shake_amount, 0.0, 28.0 * delta)
 	else:
 		camera.offset = Vector2.ZERO
+		screen_shake_amount = 0.0
 
 func _world_to_cell(pos: Vector2) -> Vector2i:
 	return Vector2i(floor(pos.x / float(CELL_SIZE)), floor(pos.y / float(CELL_SIZE)))
@@ -776,8 +1784,10 @@ func interact_nearby() -> void:
 	var pc: Vector2i = _world_to_cell(player.global_position)
 	if pc.distance_to(bed_cell) <= 2.8:
 		player.surv.is_sleeping = not player.surv.is_sleeping
+		play_sfx("item")
 		return
 	if _is_near_station(workbenches, 2.8):
+		current_bag_tab = 2
 		_toggle_inventory_window()
 		return
 	for x in range(pc.x - 2, pc.x + 3):
@@ -807,94 +1817,236 @@ func interact_nearby() -> void:
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_TAB or event.keycode == KEY_I:
+		if event.keycode == KEY_ESCAPE:
+			if inv_panel and inv_panel.visible:
+				inv_panel.visible = false
+			else:
+				_toggle_settings_window()
+			return
+		elif event.keycode == KEY_TAB or event.keycode == KEY_I:
 			_toggle_inventory_window()
+			return
 		elif event.keycode == KEY_V or event.keycode == KEY_E:
 			interact_nearby()
+			return
 		elif event.keycode == KEY_B:
 			build_mode_active = not build_mode_active
+			BuildSystem.has_touch_preview = false
+			selected_block_id = int(build_hotbar_slots[selected_hotbar_slot])
 			player.release_hooks()
+			play_sfx("ui")
+			return
 		elif event.keycode == KEY_T:
-			if game_hour < 18.0:
-				game_hour = 22.2
-			elif current_weather != 3:
-				current_weather = 3
-				game_hour = 8.3
-			else:
-				current_weather = 0
-				game_hour = 15.6
+			_cycle_day_night_weather()
+			return
+
+	if (inv_panel and inv_panel.visible) or (settings_panel and settings_panel.visible):
+		return
+
+	if mobile_hud and mobile_hud.handle_screen_input(event):
+		return
+
+	if event is InputEventScreenTouch:
+		if event.pressed:
+			if BuildSystem.try_select_hotbar_at_screen_pos(self, event.position):
+				return
+			if not is_screen_point_on_ui(event.position) and build_mode_active:
+				BuildSystem.handle_touch_build_at_screen_pos(self, event.position)
+				return
+		else:
+			BuildSystem.reset_touch_build_memory()
+	elif event is InputEventScreenDrag:
+		if build_mode_active and not is_screen_point_on_ui(event.position):
+			BuildSystem.handle_touch_build_at_screen_pos(self, event.position)
+			return
 
 func _update_cursor_and_input() -> void:
 	for i in range(1, 10):
 		if Input.is_key_pressed(KEY_0 + i):
-			selected_hotbar_slot = i - 1
-			selected_block_id = mini(i, 8)
+			select_hotbar_slot_index(i - 1, false)
+	if Input.is_key_pressed(KEY_0):
+		select_hotbar_slot_index(9, false)
 
-	if inv_panel and inv_panel.visible:
+	if (inv_panel and inv_panel.visible) or (settings_panel and settings_panel.visible):
 		return
 
 	var viewport_mouse: Vector2 = get_viewport().get_mouse_position()
-	var vp_size: Vector2 = get_viewport_rect().size
-	if viewport_mouse.y > vp_size.y - 95.0:
+	if mobile_hud and (mobile_hud.joy_touch_idx != -1 or mobile_hud.left_hook_touch_idx != -1 or mobile_hud.right_hook_touch_idx != -1):
+		return
+	if is_screen_point_on_ui(viewport_mouse):
+		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			BuildSystem.try_select_hotbar_at_screen_pos(self, viewport_mouse)
 		return
 
-	var world_mouse: Vector2 = get_global_mouse_position()
-	if not build_mode_active:
-		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-			if not player.hook_left_active:
-				player.fire_hook(true, world_mouse)
-		else:
-			player.hook_left_active = false
-		if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
-			if not player.hook_right_active:
-				player.fire_hook(false, world_mouse)
-		else:
-			player.hook_right_active = false
+	if build_mode_active:
+		BuildSystem.handle_hotbar_and_build_input(self)
 
-# ОТРИСОВКА МИРА СТРОГО ПО РАСТРОВЫМ ПИКСЕЛЬНЫМ ТАЙЛАМ 16x16!
+func _draw_merged_garden_cell(cell: Vector2i, cell_rect: Rect2, mod_col: Color = Color.WHITE) -> void:
+	var pos: Vector2 = cell_rect.position
+	var crop_idx: int = abs(cell.x + (cell.y / 3) * 2) % tex_garden_crops.size()
+	draw_texture_rect(tex_garden_crops[crop_idx], cell_rect, false, mod_col)
+
+	var has_n: bool = (int(ground_map.get(cell + Vector2i(0, -1), 0)) == 3)
+	var has_s: bool = (int(ground_map.get(cell + Vector2i(0, 1), 0)) == 3)
+	var has_w: bool = (int(ground_map.get(cell + Vector2i(-1, 0), 0)) == 3)
+	var has_e: bool = (int(ground_map.get(cell + Vector2i(1, 0), 0)) == 3)
+
+	var c_out := Color("#171412")
+	var c_wood_hi := Color("#8a5d36") * mod_col
+	var c_wood_dark := Color("#5b3a22") * mod_col
+
+	if not has_n:
+		draw_rect(Rect2(pos, Vector2(16, 1)), c_out, true)
+		draw_rect(Rect2(pos + Vector2(0, 1), Vector2(16, 2)), c_wood_hi, true)
+	if not has_s:
+		draw_rect(Rect2(pos + Vector2(0, 13), Vector2(16, 2)), c_wood_dark, true)
+		draw_rect(Rect2(pos + Vector2(0, 15), Vector2(16, 1)), c_out, true)
+	if not has_w:
+		draw_rect(Rect2(pos, Vector2(1, 16)), c_out, true)
+		draw_rect(Rect2(pos + Vector2(1, 0), Vector2(2, 16)), c_wood_hi, true)
+	if not has_e:
+		draw_rect(Rect2(pos + Vector2(13, 0), Vector2(2, 16)), c_wood_dark, true)
+		draw_rect(Rect2(pos + Vector2(15, 0), Vector2(1, 16)), c_out, true)
+
+func _draw_auto_aim_reticle() -> void:
+	if mobile_hud == null or not mobile_hud.auto_aim_enabled or not mobile_hud.has_valid_aim_target:
+		return
+	if build_mode_active:
+		return
+	var target_pt: Vector2 = mobile_hud.current_aim_target_pos
+	var pulse: float = 10.0 + sin(float(Time.get_ticks_msec()) * 0.01) * 2.0
+	var col := Color(1.0, 0.72, 0.22, 0.88)
+	draw_arc(target_pt, pulse, 0.0, TAU, 24, col, 1.5)
+	draw_line(target_pt - Vector2(pulse + 4.0, 0), target_pt - Vector2(pulse - 3.0, 0), col, 1.5)
+	draw_line(target_pt + Vector2(pulse - 3.0, 0), target_pt + Vector2(pulse + 4.0, 0), col, 1.5)
+	draw_line(target_pt - Vector2(0, pulse + 4.0), target_pt - Vector2(0, pulse - 3.0), col, 1.5)
+	draw_line(target_pt + Vector2(0, pulse - 3.0), target_pt + Vector2(0, pulse + 4.0), col, 1.5)
+
 func _draw() -> void:
 	var p_cell: Vector2i = _world_to_cell(player.global_position)
-	var view_w: int = 22
-	var view_h: int = 14
-	var is_winter: bool = (current_weather == 3 or p_cell.y < -26)
+	var view_w: int = 38
+	var view_h: int = 24
+	var is_winter: bool = (current_weather == 3)
+	var is_night: bool = (game_hour >= 19.5 or game_hour < 6.0)
+	var anim_tick: int = int(Time.get_ticks_msec() / 160)
+	var tile_sz := Vector2(16, 16)
+	var winter_tint := Color(0.84, 0.91, 1.02, 1.0) if is_winter else Color.WHITE
 
-	# 1. Рисуем 5 вариантов травы, вытоптанную землю у дома, каменные дорожки и грядки
 	for x in range(p_cell.x - view_w, p_cell.x + view_w + 1):
 		for y in range(p_cell.y - view_h, p_cell.y + view_h + 1):
 			var c := Vector2i(x, y)
 			var pos := Vector2(c * CELL_SIZE)
+			var cell_rect := Rect2(pos, tile_sz)
 			var g_type: int = int(ground_map.get(c, 0))
-			var v_idx: int = abs((x * 37 + y * 13)) % 5
+			var ground_tint: Color = _ground_tint_cache.get(c, Color.WHITE) * winter_tint
 
-			if is_winter and g_type != 2:
-				draw_rect(Rect2(pos, Vector2(16, 16)), Color("#a8b8cc"), true)
-			elif g_type == 0:
-				draw_texture(tex_grass_variants[v_idx], pos)
-			elif g_type == 1:
-				draw_texture(tex_dirt_variants[v_idx % 2], pos)
-			elif g_type == 2:
-				draw_texture(tex_wood_floor, pos)
+			if g_type == 2:
+				var wf_idx: int = ArtLoader.pick_cell_variant(c, tex_wood_floor_variants.size())
+				draw_texture_rect(tex_wood_floor_variants[wf_idx], cell_rect, false)
+			elif g_type == 7:
+				var sf_idx: int = ArtLoader.pick_cell_variant(c, tex_floor_stone_variants.size())
+				draw_texture_rect(tex_floor_stone_variants[sf_idx], cell_rect, false)
 			elif g_type == 3:
-				draw_texture(tex_garden_tile, pos)
+				_draw_merged_garden_cell(c, cell_rect, Color(0.80, 0.88, 0.98, 1.0) if is_winter else Color.WHITE)
 			elif g_type == 4:
-				draw_texture(tex_path_tile, pos)
+				var p_idx: int = ArtLoader.cell_hash(c, 37) % tex_path_variants.size()
+				draw_texture_rect(tex_path_variants[p_idx], cell_rect, false, ground_tint)
+			elif g_type == 1:
+				var d_idx: int = ArtLoader.pick_cell_variant(c, tex_dirt_variants.size())
+				draw_texture_rect(tex_dirt_variants[d_idx], cell_rect, false, ground_tint)
+			else:
+				var b_mask: int = Phase1Visuals.compute_dirt_blend_mask(c, ground_map)
+				if b_mask > 0 and b_mask < tex_dirt_blend_variants.size():
+					draw_texture_rect(tex_dirt_blend_variants[b_mask], cell_rect, false, ground_tint)
+				else:
+					var g_idx: int = int(_grass_variant_cache.get(c, 0)) % tex_grass_variants.size()
+					draw_texture_rect(tex_grass_variants[g_idx], cell_rect, false, ground_tint)
 
-			# Редкие кусты и валуны поверх земли
+			if not tex_grass_tuft_variants.is_empty() and g_type == 0 and not decor_map.has(c):
+				var th: int = ArtLoader.cell_hash(c, 71)
+				if th % 7 == 0:
+					var tf_idx: int = th % tex_grass_tuft_variants.size()
+					var ox: float = float((th >> 4) % 3) - 1.0
+					var oy: float = float((th >> 7) % 3) - 1.0
+					var flip_w: float = -16.0 if ((th & 1) == 0) else 16.0
+					var tuft_mod := Color(0.85, 0.92, 1.02, 0.9) if is_winter else Color.WHITE
+					draw_texture_rect(tex_grass_tuft_variants[tf_idx], Rect2(pos + Vector2(ox + (16.0 if flip_w < 0 else 0.0), oy), Vector2(flip_w, 16.0)), false, tuft_mod)
+
 			if decor_map.has(c):
 				var kind: String = str(decor_map[c])
-				draw_texture(tex_bush if kind == "bush" else tex_rock, pos)
+				var dh: int = ArtLoader.cell_hash(c, 83)
+				var jx: float = float((dh % 3) - 1)
+				var jy: float = float(((dh >> 3) % 3) - 1)
+				var flip_s: float = -1.0 if ((dh & 4) != 0) else 1.0
+				var prop_mod := Color(0.85, 0.92, 1.02, 1.0) if is_winter else Color.WHITE
+				Phase1Visuals.draw_soft_shadow(self, pos + Vector2(9 + jx, 12 + jy), Vector2(18, 9), 0.35)
+				match kind:
+					"bush":
+						var bv: int = dh % tex_bush_variants.size()
+						var draw_p := pos + Vector2(jx + (16.0 if flip_s < 0 else 0.0), jy)
+						draw_texture_rect(tex_bush_variants[bv], Rect2(draw_p, Vector2(16.0 * flip_s, 16.0)), false, prop_mod)
+					"rock":
+						var rv: int = dh % tex_rock_variants.size()
+						var draw_pr := pos + Vector2(jx + (16.0 if flip_s < 0 else 0.0), jy)
+						draw_texture_rect(tex_rock_variants[rv], Rect2(draw_pr, Vector2(16.0 * flip_s, 16.0)), false, prop_mod)
+					"flowers":
+						if not is_winter:
+							var fv: int = dh % tex_flowers_variants.size()
+							draw_texture_rect(tex_flowers_variants[fv], Rect2(pos + Vector2(jx, jy), Vector2(16, 16)), false)
+					"stump":
+						draw_texture_rect(tex_stump, Rect2(pos + Vector2(jx, jy), Vector2(16, 16)), false, prop_mod)
+					"log":
+						draw_texture_rect(tex_fallen_log, Rect2(pos + Vector2(jx, jy), Vector2(16, 16)), false, prop_mod)
+					"barrel":
+						draw_texture_rect(tex_barrel, Rect2(pos, Vector2(16, 16)), false)
+					"woodpile":
+						draw_texture_rect(tex_woodpile, Rect2(pos, Vector2(16, 16)), false)
+					"sawhorse":
+						draw_texture_rect(tex_sawhorse, Rect2(pos, Vector2(16, 16)), false)
+					"tent":
+						Phase1Visuals.draw_soft_shadow(self, pos + Vector2(16, 18), Vector2(34, 14), 0.45)
+						draw_texture_rect(tex_tent, Rect2(pos - Vector2(0, 6), Vector2(32, 24)), false)
+					"cart":
+						Phase1Visuals.draw_soft_shadow(self, pos + Vector2(12, 15), Vector2(26, 11), 0.42)
+						draw_texture_rect(tex_cart, Rect2(pos - Vector2(2, 2), Vector2(24, 18)), false)
 
-	# 2. Пиксельная мебель, колодец, костры и ящики (никаких векторных кругов!)
-	draw_texture(tex_well, Vector2(water_well_cell * CELL_SIZE))
+	for ap in ash_piles:
+		Phase1Visuals.draw_soft_shadow(self, ap + Vector2(2, 2), Vector2(18, 9), 0.35)
+		if has_ash_pile_png and tex_ash_pile != null:
+			var ash_sz: Vector2 = ArtLoader.get_frame_size("ash_pile")
+			draw_texture_rect(tex_ash_pile, Rect2(ap - ash_sz * 0.5, ash_sz), false)
+		else:
+			draw_rect(Rect2(ap - Vector2(7, 3), Vector2(14, 6)), Color("#495059"), true)
+			draw_rect(Rect2(ap - Vector2(5, 5), Vector2(10, 4)), Color("#6c727d"), true)
+
+	var bed_pos := Vector2(bed_cell * CELL_SIZE)
+	Phase1Visuals.draw_soft_shadow(self, bed_pos + Vector2(9, 12), Vector2(16, 10), 0.38)
+	draw_texture_rect(tex_bed, Rect2(bed_pos, Vector2(16, 16)), false)
+
+	var well_pos := Vector2(water_well_cell * CELL_SIZE)
+	Phase1Visuals.draw_soft_shadow(self, well_pos + Vector2(10, 12), Vector2(20, 10), 0.44)
+	draw_texture_rect(tex_well, Rect2(well_pos, ArtLoader.get_frame_size("well")), false)
+
+	var cf_tex: Texture2D = tex_campfire_frames[anim_tick % tex_campfire_frames.size()]
+	var cf_sz: Vector2 = ArtLoader.get_frame_size("campfire")
 	for fc in campfires:
-		draw_texture(tex_campfire, Vector2(fc * CELL_SIZE))
-	for wb_cell in workbenches:
-		draw_texture(tex_crate, Vector2(wb_cell * CELL_SIZE))
-	for crate_cell in loot_crates.keys():
-		draw_texture(tex_crate, Vector2(crate_cell * CELL_SIZE))
+		var fc_pos := Vector2(fc * CELL_SIZE)
+		Phase1Visuals.draw_soft_shadow(self, fc_pos + Vector2(9, 12), Vector2(16, 8), 0.32)
+		draw_texture_rect(cf_tex, Rect2(fc_pos, cf_sz), false)
 
-	# 3. Стены (4 разные вариации камней и мха!) и попиксельные ели
-	var pine_tex: ImageTexture = tex_pine_snow if is_winter else tex_pine_day
+	var wb_sz: Vector2 = ArtLoader.get_frame_size("workbench")
+	for wb_cell in workbenches:
+		var wb_pos := Vector2(wb_cell * CELL_SIZE)
+		Phase1Visuals.draw_soft_shadow(self, wb_pos + Vector2(10, 12), Vector2(20, 9), 0.42)
+		draw_texture_rect(tex_workbench, Rect2(wb_pos, wb_sz), false)
+
+	var cr_sz: Vector2 = ArtLoader.get_frame_size("crate")
+	for crate_cell in loot_crates.keys():
+		var cr_pos := Vector2(crate_cell * CELL_SIZE)
+		Phase1Visuals.draw_soft_shadow(self, cr_pos + Vector2(10, 12), Vector2(18, 9), 0.42)
+		draw_texture_rect(tex_crate, Rect2(cr_pos, cr_sz), false)
+
+	var wall_sz: Vector2 = ArtLoader.get_frame_size("wall_stone")
 	for y in range(p_cell.y - view_h, p_cell.y + view_h + 1):
 		for x in range(p_cell.x - view_w, p_cell.x + view_w + 1):
 			var c := Vector2i(x, y)
@@ -904,291 +2056,792 @@ func _draw() -> void:
 			var b_id: int = int(w_data.get("id", 1))
 			var pos := Vector2(c * CELL_SIZE)
 
-			if bool(w_data.get("is_door", false)) and bool(w_data.get("door_open", false)):
-				continue
-
 			if b_id == 8:
-				draw_texture(pine_tex, pos + Vector2(-8, -28))
+				var tree_hash: int = ArtLoader.cell_hash(c, 61)
+				var is_oak: bool = ((tree_hash % 5) < 2)
+				var t_var: int = (tree_hash >> 3)
+
+				var tree_arr: Array[Texture2D] = (tex_oak_snow_variants if is_winter else tex_oak_variants) if is_oak else (tex_pine_snow_variants if is_winter else tex_pine_variants)
+				if tree_arr.is_empty():
+					tree_arr = [tex_oak_tree] if is_oak else [tex_pine_day]
+
+				var tree_tex: Texture2D = tree_arr[t_var % tree_arr.size()]
+				var base_sz := Vector2(32, 42) if is_oak else Vector2(32, 44)
+				var flip_tree: float = -1.0 if ((tree_hash & 2) != 0) else 1.0
+				var jx_t: float = float((tree_hash % 5) - 2)
+				var jy_t: float = float(((tree_hash >> 2) % 3) - 1)
+				var shade_v: float = 0.92 + float((tree_hash >> 7) % 3) * 0.04
+				var tree_mod := Color(shade_v, shade_v, shade_v, 1.0)
+
+				Phase1Visuals.draw_soft_shadow(self, pos + Vector2(12 + jx_t, 12 + jy_t), Vector2(32, 15), 0.46)
+				if tree_tex != null:
+					var draw_pos := pos + Vector2(8.0 + jx_t - base_sz.x * 0.5 + (base_sz.x if flip_tree < 0 else 0.0), 16.0 + jy_t - base_sz.y)
+					draw_texture_rect(tree_tex, Rect2(draw_pos, Vector2(base_sz.x * flip_tree, base_sz.y)), false, tree_mod)
 				continue
 
-			# Скрываем блоки фасада дома, когда рисуется цельный пиксельный спрайт Дома снаружи
-			var is_house_wall: bool = (x >= -13 and x <= -5 and y >= -11 and y <= -6)
-			var player_in_house: bool = (p_cell.x >= -13 and p_cell.x <= -5 and p_cell.y >= -11 and p_cell.y <= -6)
-			if is_house_wall and not player_in_house:
+			if bool(w_data.get("is_door", false)):
+				var is_open: bool = bool(w_data.get("door_open", false))
+				Phase1Visuals.draw_soft_shadow(self, pos + Vector2(11, 15), Vector2(22, 10), 0.25 if is_open else 0.46)
+				var door_idx: int = 1 if (is_open and tex_block_door_frames.size() > 1) else 0
+				var door_tex: Texture2D = tex_block_door_frames[door_idx] if not tex_block_door_frames.is_empty() else (tex_gate_open if is_open else tex_gate_closed)
+				draw_texture_rect(door_tex, Rect2(pos + Vector2(0, -8), ArtLoader.get_frame_size("block_door")), false)
 				continue
 
-			var wall_var: int = abs(x * 19 + y * 7) % 4
-			draw_texture(tex_wall_variants[wall_var], pos + Vector2(0, -8))
+			if b_id == 9 or bool(w_data.get("is_window", false)):
+				Phase1Visuals.draw_soft_shadow(self, pos + Vector2(11, 15), Vector2(24, 11), 0.46)
+				var lit_now: bool = is_night and _is_window_room_lit(c)
+				var win_idx: int = 1 if (lit_now and tex_block_window_frames.size() > 1) else 0
+				var win_tex: Texture2D = tex_block_window_frames[win_idx] if not tex_block_window_frames.is_empty() else BuildSystem.get_wall_draw_texture(self, c, b_id)
+				draw_texture_rect(win_tex, Rect2(pos + Vector2(0, -8), ArtLoader.get_frame_size("block_window")), false)
+				continue
 
-	# 4. Угловые зубчатые башни
+			Phase1Visuals.draw_soft_shadow(self, pos + Vector2(11, 15), Vector2(24, 11), 0.46)
+			var w_tex: Texture2D = BuildSystem.get_wall_draw_texture(self, c, b_id)
+			if w_tex != null:
+				draw_texture_rect(w_tex, Rect2(pos + Vector2(0, -8), wall_sz), false, _ground_tint_cache.get(c, Color.WHITE))
+
+	var tower_sz: Vector2 = ArtLoader.get_frame_size("tower")
 	for tw in watchtowers:
 		var tpos := Vector2(tw * CELL_SIZE)
-		draw_rect(Rect2(tpos - Vector2(4, 18), Vector2(24, 32)), Color("#0f1318"), true)
-		draw_rect(Rect2(tpos - Vector2(3, 17), Vector2(22, 30)), Color("#3d4450"), true)
-		draw_rect(Rect2(tpos - Vector2(5, 21), Vector2(26, 7)), Color("#0f1318"), true)
-		draw_rect(Rect2(tpos - Vector2(4, 20), Vector2(24, 5)), Color("#525b69"), true)
-		draw_rect(Rect2(tpos + Vector2(2, -8), Vector2(3, 6)), Color("#0f1318"), true)
-		draw_rect(Rect2(tpos + Vector2(11, -8), Vector2(3, 6)), Color("#0f1318"), true)
+		Phase1Visuals.draw_soft_shadow(self, tpos + Vector2(13, 14), Vector2(32, 14), 0.52)
+		draw_texture_rect(tex_tower_sprite, Rect2(tpos - Vector2(4, 18), tower_sz), false)
 
-# ЦЕЛЬНЫЙ ПИКСЕЛЬНЫЙ СПРАЙТ ДОМА С КРЫШЕЙ, ДЫМОХОДОМ, ДВЕРЬЮ И 2 ОКНАМИ (Пункт 2!)
+	var torch_sz: Vector2 = ArtLoader.get_frame_size("wall_torch")
+	for i in range(wall_torches.size()):
+		var tc: Vector2i = wall_torches[i]
+		var fl_phase: int = (anim_tick + i) % 3
+		if has_wall_torch_png and not tex_wall_torch_frames.is_empty():
+			var tf_tex: Texture2D = tex_wall_torch_frames[(anim_tick + i) % tex_wall_torch_frames.size()]
+			draw_texture_rect(tf_tex, Rect2(Vector2(tc * CELL_SIZE) + Vector2(0, -8), torch_sz), false)
+		else:
+			var t_pos := Vector2(tc * CELL_SIZE) + Vector2(6, -5)
+			draw_rect(Rect2(t_pos + Vector2(1, 3), Vector2(2, 5)), Color("#3b2516"), true)
+		var spark_pos := Vector2(tc * CELL_SIZE) + Vector2(6 + (fl_phase - 1), -6 - (fl_phase % 2))
+		draw_rect(Rect2(spark_pos, Vector2(3, 3)), Color("#ff9429"), true)
+		draw_rect(Rect2(spark_pos + Vector2(1, 1), Vector2(2, 2)), Color("#fff3b0"), true)
+
+	for sp in hit_sparks:
+		var sp_pos: Vector2 = sp["pos"]
+		var sp_col: Color = sp["col"]
+		draw_rect(Rect2(sp_pos + Vector2(-3, -3), Vector2(3, 3)), sp_col, true)
+		draw_rect(Rect2(sp_pos + Vector2(2, -1), Vector2(2, 2)), sp_col.lightened(0.25), true)
+
+	_draw_auto_aim_reticle()
+	BuildSystem.draw_build_ghost(self)
+
+	var fort_rect := Rect2(Vector2(-15 * CELL_SIZE, -13 * CELL_SIZE), Vector2(30 * CELL_SIZE, 21 * CELL_SIZE))
+	Phase1Visuals.draw_outside_atmosphere(self, fort_rect)
+
 func _draw_roof_and_chimney_smoke(layer: Node2D) -> void:
-	var p_cell: Vector2i = _world_to_cell(player.global_position)
-	var player_in_house: bool = (p_cell.x >= -13 and p_cell.x <= -5 and p_cell.y >= -11 and p_cell.y <= -6)
-
-	if not player_in_house and tex_house_exterior != null:
-		var h_pos := Vector2(-13 * CELL_SIZE, -11 * CELL_SIZE)
-		layer.draw_texture(tex_house_exterior, h_pos)
-		# Пиксельные клубы дыма из каменного дымохода
-		var t_sec: float = float(Time.get_ticks_msec()) * 0.002
-		for i in range(3):
-			var dy: float = fmod(t_sec * 8.0 + float(i) * 6.0, 18.0)
-			var dx: float = sin(t_sec + float(i)) * 3.0
-			var smoke_pt := h_pos + Vector2(112 + int(dx), -4 - int(dy))
-			layer.draw_rect(Rect2(smoke_pt, Vector2(4, 4)), Color(0.8, 0.84, 0.88, 0.45 - dy * 0.02), true)
+	BuildSystem.draw_all_roofs(layer, self)
 
 func _draw_top_left_portrait_and_bars(ctrl: Control) -> void:
 	var s: SurvivalSystem = player.surv
-	ctrl.draw_rect(Rect2(Vector2(0, 0), Vector2(196, 54)), Color(0.08, 0.10, 0.13, 0.92), true)
-	ctrl.draw_rect(Rect2(Vector2(0, 0), Vector2(196, 54)), Color(0.26, 0.30, 0.36, 0.9), false, 1.5)
-	ctrl.draw_rect(Rect2(Vector2(6, 6), Vector2(42, 42)), Color("#1c222b"), true)
-	ctrl.draw_rect(Rect2(Vector2(6, 6), Vector2(42, 42)), Color("#525c6b"), false, 1.5)
+	ctrl.draw_rect(Rect2(Vector2(0, 0), Vector2(204, 56)), Color(0.07, 0.07, 0.08, 0.94), true)
+	ctrl.draw_rect(Rect2(Vector2(0, 0), Vector2(204, 56)), Color("#3b3733"), false, 1.5)
+	ctrl.draw_rect(Rect2(Vector2(6, 6), Vector2(44, 44)), Color("#161514"), true)
+	ctrl.draw_rect(Rect2(Vector2(6, 6), Vector2(44, 44)), Color("#524b44"), false, 1.5)
 	if player and player.tex_idle:
-		ctrl.draw_texture_rect(player.tex_idle, Rect2(Vector2(11, 8), Vector2(32, 38)), false)
+		ctrl.draw_texture_rect(player.tex_idle, Rect2(Vector2(12, 8), Vector2(32, 40)), false)
 
 	var bars := [
-		{"ratio": clampf(s.hp / 100.0, 0.0, 1.0), "col": Color("#d94343"), "y": 11.0},
-		{"ratio": clampf(s.hunger / 100.0, 0.0, 1.0), "col": Color("#d99b38"), "y": 25.0},
-		{"ratio": clampf(s.thirst / 100.0, 0.0, 1.0), "col": Color("#3b8cd9"), "y": 39.0}
+		{"ratio": clampf(s.hp / 100.0, 0.0, 1.0), "col": Color("#cc3b3b"), "y": 10.0, "icon": tex_ui_heart},
+		{"ratio": clampf(s.hunger / 100.0, 0.0, 1.0), "col": Color("#d18c32"), "y": 24.0, "icon": tex_ui_food},
+		{"ratio": clampf(s.thirst / 100.0, 0.0, 1.0), "col": Color("#4986b8"), "y": 38.0, "icon": tex_ui_water}
 	]
 	for b in bars:
 		var by: float = float(b["y"])
-		ctrl.draw_rect(Rect2(Vector2(56, by), Vector2(128, 8)), Color("#1b2028"), true)
-		ctrl.draw_rect(Rect2(Vector2(56, by), Vector2(128.0 * float(b["ratio"]), 8)), b["col"], true)
+		var bar_x: float = 58.0
+		var bar_w: float = 134.0
+		if b["icon"] != null:
+			ctrl.draw_texture_rect(b["icon"], Rect2(Vector2(54, by - 3.0), Vector2(14, 14)), false)
+			bar_x = 72.0
+			bar_w = 120.0
+		ctrl.draw_rect(Rect2(Vector2(bar_x, by), Vector2(bar_w, 9)), Color("#141416"), true)
+		ctrl.draw_rect(Rect2(Vector2(bar_x, by), Vector2(bar_w * float(b["ratio"]), 9)), b["col"], true)
+		ctrl.draw_rect(Rect2(Vector2(bar_x, by), Vector2(bar_w, 9)), Color("#2e2c2a"), false, 1.0)
 
 func _draw_minimap(mm: Control) -> void:
 	var rect := Rect2(Vector2.ZERO, mm.size)
-	mm.draw_rect(rect, Color(0.07, 0.09, 0.12, 0.92), true)
-	mm.draw_rect(rect, Color(0.38, 0.44, 0.52, 0.9), false, 1.5)
+	mm.draw_rect(rect, Color(0.07, 0.07, 0.08, 0.94), true)
+	mm.draw_rect(rect, Color("#3b3733"), false, 1.5)
 	var c: Vector2 = mm.size * 0.5
-	mm.draw_line(Vector2(c.x, 14), Vector2(c.x, mm.size.y - 14), Color(0.3, 0.36, 0.42, 0.45), 1.0)
-	mm.draw_line(Vector2(14, c.y), Vector2(mm.size.x - 14, c.y), Color(0.3, 0.36, 0.42, 0.45), 1.0)
+	mm.draw_rect(Rect2(c - Vector2(20, 16), Vector2(40, 26)), Color(0.42, 0.40, 0.38, 0.55), false, 1.0)
+	mm.draw_line(Vector2(c.x, 14), Vector2(c.x, mm.size.y - 14), Color(0.28, 0.27, 0.26, 0.45), 1.0)
+	mm.draw_line(Vector2(14, c.y), Vector2(mm.size.x - 14, c.y), Color(0.28, 0.27, 0.26, 0.45), 1.0)
 	var font: Font = ThemeDB.fallback_font
-	mm.draw_string(font, Vector2(c.x - 4, 12), "N", HORIZONTAL_ALIGNMENT_CENTER, -1, 11, Color("#d0d8e0"))
-	mm.draw_string(font, Vector2(c.x - 4, mm.size.y - 3), "S", HORIZONTAL_ALIGNMENT_CENTER, -1, 11, Color("#d0d8e0"))
-	mm.draw_string(font, Vector2(4, c.y + 4), "W", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("#d0d8e0"))
-	mm.draw_string(font, Vector2(mm.size.x - 13, c.y + 4), "E", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("#d0d8e0"))
+	mm.draw_string(font, Vector2(c.x - 4, 12), "N", HORIZONTAL_ALIGNMENT_CENTER, -1, 11, Color("#b8b2a8"))
+	mm.draw_string(font, Vector2(c.x - 4, mm.size.y - 3), "S", HORIZONTAL_ALIGNMENT_CENTER, -1, 11, Color("#b8b2a8"))
+	mm.draw_string(font, Vector2(4, c.y + 4), "W", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("#b8b2a8"))
+	mm.draw_string(font, Vector2(mm.size.x - 13, c.y + 4), "E", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("#b8b2a8"))
 
 	for child in titans_layer.get_children():
 		if child is TitanEntity and child.state != TitanEntity.State.DYING:
 			var rel: Vector2 = (child.global_position - player.global_position) / float(CELL_SIZE)
-			var pt: Vector2 = c + (rel * 1.45).limit_length(52.0)
-			mm.draw_rect(Rect2(pt - Vector2(2, 2), Vector2(4, 4)), Color("#ff5252"), true)
-	mm.draw_rect(Rect2(c - Vector2(2, 2), Vector2(4, 4)), Color("#ffffff"), true)
+			var pt: Vector2 = c + (rel * 1.45).limit_length(50.0)
+			mm.draw_rect(Rect2(pt - Vector2(2, 2), Vector2(4, 4)), Color("#d94343"), true)
+	mm.draw_rect(Rect2(c - Vector2(2, 2), Vector2(5, 5)), Color("#e8e2d8"), true)
 
 func _draw_bottom_hotbar(hb: Control) -> void:
-	var slot_w: float = 44.0
-	var gap: float = 4.0
+	var slot_w: float = BuildSystem.HOTBAR_SLOT_W
+	var gap: float = BuildSystem.HOTBAR_GAP
 	var total_w: float = 10.0 * slot_w + 9.0 * gap
 	var start_x: float = (hb.size.x - total_w) * 0.5
 	var font: Font = ThemeDB.fallback_font
+	var icon_sz := Vector2(30, 30)
 
-	hb.draw_rect(Rect2(Vector2(start_x - 6, 0), Vector2(total_w + 12, 52)), Color(0.07, 0.09, 0.12, 0.92), true)
-	hb.draw_rect(Rect2(Vector2(start_x - 6, 0), Vector2(total_w + 12, 52)), Color(0.28, 0.33, 0.40, 0.9), false, 1.5)
+	BuildSystem.draw_build_banner(hb, self, start_x, total_w, font)
 
-	var counts := [2, 3, player.spare_blades, int(player.surv.inventory.get("wood", 0)), int(player.surv.inventory.get("stone", 0)), 7, 4, 2, core_stones_placed, 1]
+	hb.draw_rect(Rect2(Vector2(start_x - 8, 0), Vector2(total_w + 16, BuildSystem.HOTBAR_HEIGHT)), Color(0.07, 0.07, 0.08, 0.94), true)
+	hb.draw_rect(Rect2(Vector2(start_x - 8, 0), Vector2(total_w + 16, BuildSystem.HOTBAR_HEIGHT)), Color("#3b3733"), false, 1.5)
+
 	for i in range(10):
 		var sx: float = start_x + float(i) * (slot_w + gap)
-		var r := Rect2(Vector2(sx, 4), Vector2(slot_w, 44))
+		var r := Rect2(Vector2(sx, 5), Vector2(slot_w, slot_w))
 		var is_sel: bool = (i == selected_hotbar_slot)
-		hb.draw_rect(r, Color("#1b222c") if is_sel else Color("#12161d"), true)
-		hb.draw_rect(r, Color("#70a8ff") if is_sel else Color("#2c3440"), false, 2.0 if is_sel else 1.0)
-		hb.draw_rect(Rect2(r.position + Vector2(14, 12), Vector2(16, 16)), Color("#6e7b8b") if i > 4 else Color("#9e7348"), true)
-		hb.draw_string(font, r.position + Vector2(26, 40), str(counts[i]), HORIZONTAL_ALIGNMENT_RIGHT, 14, 11, Color("#d8e0e8"))
+		hb.draw_rect(r, Color("#29231d") if is_sel else Color("#141416"), true)
+		hb.draw_rect(r, Color("#d99136") if is_sel else Color("#2e2c2a"), false, 2.5 if is_sel else 1.0)
+
+		if build_mode_active:
+			var b_id: int = int(build_hotbar_slots[i]) if i < build_hotbar_slots.size() else 0
+			if b_id > 0 and blocks_db.has(str(b_id)):
+				var b_tex: Texture2D = BuildSystem.get_preview_texture(self, b_id, Vector2i.ZERO)
+				if b_tex != null:
+					hb.draw_texture_rect(b_tex, Rect2(r.position + Vector2(14, 7), Vector2(26, 28)), false)
+				var c_item: String = str(blocks_db[str(b_id)].get("cost_item", "wood"))
+				var cnt: int = int(player.surv.inventory.get(c_item, 0))
+				hb.draw_string(font, r.position + Vector2(slot_w - 24, slot_w - 5), str(cnt), HORIZONTAL_ALIGNMENT_RIGHT, 20, 11, Color("#ece5d8"))
+		else:
+			var s_data: Dictionary = combat_hotbar_slots[i] if i < combat_hotbar_slots.size() else {}
+			var s_kind: String = str(s_data.get("kind", "empty"))
+			if s_kind != "empty":
+				var ic_idx: int = clampi(int(s_data.get("icon_idx", 0)), 0, tex_hotbar_icons.size() - 1)
+				if not tex_hotbar_icons.is_empty() and tex_hotbar_icons[ic_idx] != null:
+					hb.draw_texture_rect(tex_hotbar_icons[ic_idx], Rect2(r.position + Vector2((slot_w - icon_sz.x) * 0.5, 6), icon_sz), false)
+				var s_id: String = str(s_data.get("id", ""))
+				var cnt_str: String = ""
+				if s_kind == "item":
+					cnt_str = str(int(player.surv.inventory.get(s_id, 0)))
+				elif s_id == "blades":
+					cnt_str = "%d%%" % int(player.blade_durability)
+				if cnt_str != "":
+					hb.draw_string(font, r.position + Vector2(slot_w - 30, slot_w - 5), cnt_str, HORIZONTAL_ALIGNMENT_RIGHT, 26, 11, Color("#ece5d8"))
+
+		hb.draw_string(font, r.position + Vector2(5, 13), str((i + 1) % 10), HORIZONTAL_ALIGNMENT_LEFT, 16, 10, Color("#9a9186"))
 
 func _toggle_inventory_window() -> void:
+	if settings_panel and settings_panel.visible:
+		settings_panel.visible = false
 	if inv_panel:
 		inv_panel.visible = not inv_panel.visible
 		if inv_panel.visible:
 			_refresh_inventory_ui()
 
+func _toggle_settings_window() -> void:
+	if inv_panel and inv_panel.visible:
+		inv_panel.visible = false
+	if settings_panel:
+		settings_panel.visible = not settings_panel.visible
+
+func _move_selected_hotbar_slot(dir: int) -> void:
+	var cur: int = selected_hotbar_slot
+	var nxt: int = (cur + dir + 10) % 10
+	if build_mode_active or current_bag_tab == 1:
+		var tmp_b: int = build_hotbar_slots[cur]
+		build_hotbar_slots[cur] = build_hotbar_slots[nxt]
+		build_hotbar_slots[nxt] = tmp_b
+		selected_hotbar_slot = nxt
+		selected_block_id = int(build_hotbar_slots[nxt])
+	else:
+		var tmp_c: Dictionary = combat_hotbar_slots[cur]
+		combat_hotbar_slots[cur] = combat_hotbar_slots[nxt]
+		combat_hotbar_slots[nxt] = tmp_c
+		selected_hotbar_slot = nxt
+	play_sfx("ui")
+	_refresh_inventory_ui()
+	queue_redraw()
+
+func _clear_selected_hotbar_slot() -> void:
+	if build_mode_active or current_bag_tab == 1:
+		build_hotbar_slots[selected_hotbar_slot] = 0
+		selected_block_id = 0
+	else:
+		combat_hotbar_slots[selected_hotbar_slot] = {"kind": "empty", "id": "", "name": "Пустой слот", "icon_idx": 0}
+	play_sfx("ui")
+	_refresh_inventory_ui()
+	queue_redraw()
+
+func _get_icon_idx_for_item(item_id: String) -> int:
+	match item_id:
+		"core_stone", "ash", "scrap":
+			return 5
+		"wood", "campfire_kit", "workbench_kit":
+			return 6
+		"stone":
+			return 7
+		"herbs", "clean_water", "bandage", "antiseptic":
+			return 8
+		_:
+			return 9
+
 func _refresh_inventory_ui() -> void:
 	if not inv_panel or not inv_panel.visible:
 		return
-	for ch in inv_recipes_box.get_children():
+	for ch in inv_list_box.get_children():
 		ch.queue_free()
-	var recipes: Array = player.surv.recipes_db
-	for idx in range(recipes.size()):
-		var rec: Dictionary = recipes[idx]
-		var btn := Button.new()
-		btn.text = "  ⚒  " + str(rec.get("name", "Рецепт"))
-		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		var i_copy: int = idx
-		btn.pressed.connect(func():
-			selected_recipe_index = i_copy
+	for ch in detail_actions_box.get_children():
+		ch.queue_free()
+
+	if current_bag_tab == 0:
+		var bag_entries: Array[Dictionary] = [
+			{"kind": "tool", "id": "torch", "name": "🔥 Факел (освещение)", "desc": "Освещает путь в темноте и отпугивает ночных тварей.", "icon_idx": 0},
+			{"kind": "tool", "id": "axe", "name": "🪓 Топор лесоруба", "desc": "Быстрая рубка деревьев в лесу (2 удара на дерево, +3 доски).", "icon_idx": 1},
+			{"kind": "tool", "id": "pickaxe", "name": "⛏ Кирка каменотёса", "desc": "Добыча булыжника и остов-камня из валунов в лесу.", "icon_idx": 2},
+			{"kind": "tool", "id": "blades", "name": "⚔ Парные клинки (%d%%)" % int(player.blade_durability), "desc": "Оружие против титанов. Запасных лезвий: %d." % player.spare_blades, "icon_idx": 3},
+			{"kind": "tool", "id": "crossbow", "name": "🏹 Охотничий арбалет", "desc": "Дистанционное оружие поддержки.", "icon_idx": 4}
+		]
+		for item_id in player.surv.inventory.keys():
+			var cnt: int = int(player.surv.inventory[item_id])
+			if cnt <= 0:
+				continue
+			var i_info: Dictionary = player.surv.items_db.get(item_id, {"name": item_id, "type": "mat"})
+			bag_entries.append({
+				"kind": "item",
+				"id": str(item_id),
+				"count": cnt,
+				"name": "%s  (x%d)" % [str(i_info.get("name", item_id)), cnt],
+				"raw_name": str(i_info.get("name", item_id)),
+				"type": str(i_info.get("type", "mat")),
+				"desc": "Предмет в рюкзаке (тип: %s). Можно использовать или вынести на хотбар." % str(i_info.get("type", "материал")),
+				"icon_idx": _get_icon_idx_for_item(str(item_id))
+			})
+
+		selected_bag_entry_index = clampi(selected_bag_entry_index, 0, maxi(0, bag_entries.size() - 1))
+		for idx in range(bag_entries.size()):
+			var entry: Dictionary = bag_entries[idx]
+			var btn := Button.new()
+			btn.custom_minimum_size = Vector2(235, 36)
+			btn.text = ("▶ " if idx == selected_bag_entry_index else "   ") + str(entry["name"])
+			btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			var i_copy: int = idx
+			btn.pressed.connect(func():
+				selected_bag_entry_index = i_copy
+				play_sfx("ui")
+				_refresh_inventory_ui()
+			)
+			inv_list_box.add_child(btn)
+
+		if selected_bag_entry_index < bag_entries.size():
+			var sel: Dictionary = bag_entries[selected_bag_entry_index]
+			lbl_detail_title.text = str(sel["name"])
+			lbl_detail_desc.text = str(sel["desc"])
+			var cur_slot_name: String = str(combat_hotbar_slots[selected_hotbar_slot].get("name", "Пусто"))
+			lbl_detail_ing.text = "Выбранный слот хотбара [%d]:\n• %s" % [(selected_hotbar_slot + 1) % 10, cur_slot_name]
+
+			if str(sel["kind"]) == "item":
+				var item_id_str: String = str(sel["id"])
+				var itype: String = str(sel.get("type", "mat"))
+				if itype in ["food", "drink", "med", "placeable"]:
+					var btn_use := Button.new()
+					btn_use.custom_minimum_size = Vector2(200, 36)
+					btn_use.text = "✔ Использовать / Установить"
+					btn_use.pressed.connect(func():
+						player.use_inventory_item(item_id_str)
+						_refresh_inventory_ui()
+					)
+					detail_actions_box.add_child(btn_use)
+
+				var btn_drop := Button.new()
+				btn_drop.custom_minimum_size = Vector2(200, 34)
+				btn_drop.text = "🗑 Выбросить 1 шт. из рюкзака"
+				btn_drop.pressed.connect(func():
+					player.surv.remove_item(item_id_str, 1)
+					play_sfx("ui")
+					_refresh_inventory_ui()
+				)
+				detail_actions_box.add_child(btn_drop)
+
+			var btn_bind := Button.new()
+			btn_bind.custom_minimum_size = Vector2(200, 36)
+			btn_bind.text = "📌 Поставить в текущий слот [%d]" % ((selected_hotbar_slot + 1) % 10)
+			btn_bind.pressed.connect(func():
+				combat_hotbar_slots[selected_hotbar_slot] = {
+					"kind": sel["kind"],
+					"id": sel["id"],
+					"name": sel.get("raw_name", sel["name"]),
+					"icon_idx": int(sel.get("icon_idx", 6))
+				}
+				build_mode_active = false
+				play_sfx("item")
+				_refresh_inventory_ui()
+				queue_redraw()
+			)
+			detail_actions_box.add_child(btn_bind)
+
+	elif current_bag_tab == 1:
+		var block_ids := [1, 2, 3, 4, 5, 6, 9, 10]
+		selected_bag_entry_index = clampi(selected_bag_entry_index, 0, block_ids.size() - 1)
+		for idx in range(block_ids.size()):
+			var b_id: int = block_ids[idx]
+			var b_info: Dictionary = blocks_db.get(str(b_id), {})
+			var cost_id: String = str(b_info.get("cost_item", "wood"))
+			var have_cnt: int = int(player.surv.inventory.get(cost_id, 0))
+			var btn := Button.new()
+			btn.custom_minimum_size = Vector2(235, 36)
+			btn.text = "%s[%d] %s (ресурс: %d)" % [("▶ " if idx == selected_bag_entry_index else "   "), b_id, str(b_info.get("name", "Блок")), have_cnt]
+			btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			var i_copy: int = idx
+			btn.pressed.connect(func():
+				selected_bag_entry_index = i_copy
+				play_sfx("ui")
+				_refresh_inventory_ui()
+			)
+			inv_list_box.add_child(btn)
+
+		var sel_b_id: int = block_ids[selected_bag_entry_index]
+		var sel_b_info: Dictionary = blocks_db.get(str(sel_b_id), {})
+		var c_id: String = str(sel_b_info.get("cost_item", "wood"))
+		var c_name: String = str(player.surv.items_db.get(c_id, {}).get("name", c_id))
+		lbl_detail_title.text = "Блок: " + str(sel_b_info.get("name", "Блок"))
+		lbl_detail_desc.text = "Прочность: %d HP  ·  Материал: %s (в наличии: %d)" % [
+			int(sel_b_info.get("hp", 30)), c_name, int(player.surv.inventory.get(c_id, 0))
+		]
+		var cur_b_in_slot: int = int(build_hotbar_slots[selected_hotbar_slot])
+		var cur_b_name: String = str(blocks_db.get(str(cur_b_in_slot), {}).get("name", "Пустой слот"))
+		lbl_detail_ing.text = "Строительный слот [%d] сейчас:\n• %s" % [(selected_hotbar_slot + 1) % 10, cur_b_name]
+
+		var btn_assign_b := Button.new()
+		btn_assign_b.custom_minimum_size = Vector2(200, 38)
+		btn_assign_b.text = "🔨 Назначить блок в слот [%d] и строить" % ((selected_hotbar_slot + 1) % 10)
+		btn_assign_b.pressed.connect(func():
+			build_hotbar_slots[selected_hotbar_slot] = sel_b_id
+			selected_block_id = sel_b_id
+			build_mode_active = true
+			BuildSystem.has_touch_preview = false
+			play_sfx("build")
 			_refresh_inventory_ui()
+			queue_redraw()
 		)
-		inv_recipes_box.add_child(btn)
+		detail_actions_box.add_child(btn_assign_b)
 
-	if selected_recipe_index >= 0 and selected_recipe_index < recipes.size():
-		var sel_rec: Dictionary = recipes[selected_recipe_index]
-		lbl_detail_title.text = str(sel_rec.get("name", "Предмет"))
-		lbl_detail_desc.text = "Основной строительный и походный материал выжившего."
-		var cost: Dictionary = sel_rec.get("cost", {})
-		var ing_lines: Array[String] = []
-		for ck in cost.keys():
-			ing_lines.append("• %s: %d/%d" % [str(player.surv.items_db.get(ck, {}).get("name", ck)), int(player.surv.inventory.get(ck, 0)), int(cost[ck])])
-		lbl_detail_ing.text = "Ингредиенты:\n" + "\n".join(ing_lines)
-		btn_craft_action.disabled = not player.surv.has_items(cost)
+	else:
+		var recipes: Array = player.surv.recipes_db
+		selected_recipe_index = clampi(selected_recipe_index, 0, maxi(0, recipes.size() - 1))
+		for idx in range(recipes.size()):
+			var rec: Dictionary = recipes[idx]
+			var btn := Button.new()
+			btn.custom_minimum_size = Vector2(235, 36)
+			btn.text = ("▶ ⚒ " if idx == selected_recipe_index else "   ⚒ ") + str(rec.get("name", "Рецепт"))
+			btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			var i_copy: int = idx
+			btn.pressed.connect(func():
+				selected_recipe_index = i_copy
+				play_sfx("ui")
+				_refresh_inventory_ui()
+			)
+			inv_list_box.add_child(btn)
 
-func _make_dark_card_style(border_col: Color = Color(0.26, 0.31, 0.38, 0.9)) -> StyleBoxFlat:
+		if selected_recipe_index < recipes.size():
+			var sel_rec: Dictionary = recipes[selected_recipe_index]
+			lbl_detail_title.text = str(sel_rec.get("name", "Предмет"))
+			lbl_detail_desc.text = "Создание снаряжения и припасов выжившего."
+			var cost: Dictionary = sel_rec.get("cost", {})
+			var ing_lines: Array[String] = []
+			for ck in cost.keys():
+				ing_lines.append("• %s: %d / %d" % [
+					str(player.surv.items_db.get(ck, {}).get("name", ck)),
+					int(player.surv.inventory.get(ck, 0)),
+					int(cost[ck])
+				])
+			lbl_detail_ing.text = "Ингредиенты:\n" + "\n".join(ing_lines)
+
+			var btn_craft := Button.new()
+			btn_craft.custom_minimum_size = Vector2(200, 40)
+			btn_craft.text = "⚒ Создать предмет"
+			btn_craft.disabled = not player.surv.has_items(cost)
+			btn_craft.pressed.connect(func():
+				if player.surv.has_items(cost):
+					for ck in cost.keys():
+						player.surv.remove_item(str(ck), int(cost[ck]))
+					var out_id: String = str(sel_rec.get("out", "wood"))
+					var out_cnt: int = int(sel_rec.get("count", 1))
+					player.surv.add_item(out_id, out_cnt)
+					if player.surv.items_db.get(out_id, {}).get("type", "") == "placeable":
+						player.use_inventory_item(out_id)
+					play_sfx("build")
+					_refresh_inventory_ui()
+			)
+			detail_actions_box.add_child(btn_craft)
+
+	if current_bag_tab == 0 or current_bag_tab == 1:
+		var slot_row := HBoxContainer.new()
+		slot_row.add_theme_constant_override("separation", 6)
+		detail_actions_box.add_child(slot_row)
+
+		var btn_left := Button.new()
+		btn_left.custom_minimum_size = Vector2(96, 34)
+		btn_left.text = "◀ Сдвинуть"
+		btn_left.pressed.connect(func(): _move_selected_hotbar_slot(-1))
+		slot_row.add_child(btn_left)
+
+		var btn_right := Button.new()
+		btn_right.custom_minimum_size = Vector2(96, 34)
+		btn_right.text = "Сдвинуть ▶"
+		btn_right.pressed.connect(func(): _move_selected_hotbar_slot(1))
+		slot_row.add_child(btn_right)
+
+		var btn_clear := Button.new()
+		btn_clear.custom_minimum_size = Vector2(200, 34)
+		btn_clear.text = "✕ Очистить слот [%d] в хотбаре" % ((selected_hotbar_slot + 1) % 10)
+		btn_clear.pressed.connect(func(): _clear_selected_hotbar_slot())
+		detail_actions_box.add_child(btn_clear)
+
+func _make_dark_card_style(border_col: Color = Color("#3b3733")) -> StyleBox:
 	var st := StyleBoxFlat.new()
-	st.bg_color = Color(0.08, 0.10, 0.13, 0.92)
+	st.bg_color = Color(0.07, 0.07, 0.08, 0.95)
 	st.border_color = border_col
 	st.set_border_width_all(1)
-	st.set_corner_radius_all(6)
-	st.set_content_margin_all(10)
+	st.set_corner_radius_all(4)
+	st.set_content_margin_all(12)
 	return st
 
 func _setup_reference_hud() -> void:
 	var hud := CanvasLayer.new()
 	add_child(hud)
 
+	mobile_hud = MobileHUD.new()
+	hud.add_child(mobile_hud)
+	mobile_hud.setup(self)
+
 	hud_bars_ctrl = Control.new()
 	hud_bars_ctrl.position = Vector2(14, 14)
-	hud_bars_ctrl.size = Vector2(200, 56)
+	hud_bars_ctrl.size = Vector2(204, 56)
 	hud_bars_ctrl.draw.connect(func(): _draw_top_left_portrait_and_bars(hud_bars_ctrl))
 	hud.add_child(hud_bars_ctrl)
 
-	var clock_card := PanelContainer.new()
-	clock_card.position = Vector2(14, 76)
-	clock_card.custom_minimum_size = Vector2(165, 52)
-	clock_card.add_theme_stylebox_override("panel", _make_dark_card_style())
-	hud.add_child(clock_card)
+	clock_card_ctrl = PanelContainer.new()
+	clock_card_ctrl.position = Vector2(14, 76)
+	clock_card_ctrl.custom_minimum_size = Vector2(150, 52)
+	clock_card_ctrl.add_theme_stylebox_override("panel", _make_dark_card_style())
+	hud.add_child(clock_card_ctrl)
 	lbl_day_clock = Label.new()
-	clock_card.add_child(lbl_day_clock)
+	lbl_day_clock.add_theme_color_override("font_color", Color("#d8d2c8"))
+	clock_card_ctrl.add_child(lbl_day_clock)
 
-	var quest_card := PanelContainer.new()
-	quest_card.position = Vector2(14, 134)
-	quest_card.custom_minimum_size = Vector2(196, 62)
-	quest_card.add_theme_stylebox_override("panel", _make_dark_card_style())
-	hud.add_child(quest_card)
+	quest_card_ctrl = PanelContainer.new()
+	quest_card_ctrl.position = Vector2(14, 134)
+	quest_card_ctrl.custom_minimum_size = Vector2(204, 74)
+	quest_card_ctrl.add_theme_stylebox_override("panel", _make_dark_card_style())
+	hud.add_child(quest_card_ctrl)
 	lbl_quest_list = Label.new()
-	quest_card.add_child(lbl_quest_list)
+	lbl_quest_list.add_theme_color_override("font_color", Color("#ccc5bc"))
+	quest_card_ctrl.add_child(lbl_quest_list)
 
-	var quick_bar := HBoxContainer.new()
-	quick_bar.position = Vector2(14, 204)
-	hud.add_child(quick_bar)
+	quick_bar_ctrl = HBoxContainer.new()
+	quick_bar_ctrl.position = Vector2(14, 214)
+	quick_bar_ctrl.add_theme_constant_override("separation", 5)
+	hud.add_child(quick_bar_ctrl)
 
 	var btn_phase := Button.new()
-	btn_phase.text = "День/Ночь/Зима (T)"
+	btn_phase.custom_minimum_size = Vector2(82, 34)
+	btn_phase.text = "День/Ночь"
 	btn_phase.focus_mode = Control.FOCUS_NONE
-	btn_phase.pressed.connect(func():
-		if game_hour < 18.0:
-			game_hour = 22.2
-		elif current_weather != 3:
-			current_weather = 3
-			game_hour = 8.3
-		else:
-			current_weather = 0
-			game_hour = 15.6
-	)
-	quick_bar.add_child(btn_phase)
+	btn_phase.pressed.connect(func(): _cycle_day_night_weather())
+	quick_bar_ctrl.add_child(btn_phase)
 
 	var btn_wb := Button.new()
-	btn_wb.text = "Верстак (Tab)"
+	btn_wb.custom_minimum_size = Vector2(82, 34)
+	btn_wb.text = "Рюкзак"
 	btn_wb.focus_mode = Control.FOCUS_NONE
-	btn_wb.pressed.connect(func(): _toggle_inventory_window())
-	quick_bar.add_child(btn_wb)
+	btn_wb.pressed.connect(func():
+		play_sfx("ui")
+		_toggle_inventory_window()
+	)
+	quick_bar_ctrl.add_child(btn_wb)
+
+	var btn_build := Button.new()
+	btn_build.custom_minimum_size = Vector2(82, 34)
+	btn_build.text = "Стройка"
+	btn_build.focus_mode = Control.FOCUS_NONE
+	btn_build.pressed.connect(func():
+		build_mode_active = not build_mode_active
+		BuildSystem.has_touch_preview = false
+		selected_block_id = int(build_hotbar_slots[selected_hotbar_slot])
+		player.release_hooks()
+		play_sfx("ui")
+	)
+	quick_bar_ctrl.add_child(btn_build)
+
+	var btn_cfg := Button.new()
+	btn_cfg.custom_minimum_size = Vector2(92, 34)
+	btn_cfg.text = "⚙ Настройки"
+	btn_cfg.focus_mode = Control.FOCUS_NONE
+	btn_cfg.pressed.connect(func():
+		play_sfx("ui")
+		_toggle_settings_window()
+	)
+	quick_bar_ctrl.add_child(btn_cfg)
 
 	minimap_ctrl = Control.new()
 	minimap_ctrl.size = Vector2(124, 124)
-	minimap_ctrl.position = Vector2(1010, 14)
+	minimap_ctrl.position = Vector2(1014, 14)
 	minimap_ctrl.draw.connect(func(): _draw_minimap(minimap_ctrl))
 	hud.add_child(minimap_ctrl)
 
 	hotbar_ctrl = Control.new()
-	hotbar_ctrl.size = Vector2(1152, 56)
-	hotbar_ctrl.position = Vector2(0, 582)
+	hotbar_ctrl.size = Vector2(1152, BuildSystem.HOTBAR_HEIGHT)
+	hotbar_ctrl.position = Vector2(0, 576)
 	hotbar_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hotbar_ctrl.draw.connect(func(): _draw_bottom_hotbar(hotbar_ctrl))
 	hud.add_child(hotbar_ctrl)
 
 	alert_panel = PanelContainer.new()
-	alert_panel.position = Vector2(885, 495)
-	alert_panel.custom_minimum_size = Vector2(248, 74)
-	alert_panel.add_theme_stylebox_override("panel", _make_dark_card_style(Color("#ff5252")))
+	alert_panel.position = Vector2(885, 146)
+	alert_panel.custom_minimum_size = Vector2(248, 70)
+	alert_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	alert_panel.add_theme_stylebox_override("panel", _make_dark_card_style(Color("#9e3333")))
 	hud.add_child(alert_panel)
 	var alert_vbox := VBoxContainer.new()
 	alert_panel.add_child(alert_vbox)
 	lbl_alert_title = Label.new()
 	lbl_alert_title.text = "!  Титан рядом!"
-	lbl_alert_title.add_theme_color_override("font_color", Color("#ff5252"))
+	lbl_alert_title.add_theme_color_override("font_color", Color("#d94848"))
 	alert_vbox.add_child(lbl_alert_title)
 	lbl_alert_sub = Label.new()
 	lbl_alert_sub.text = "Спрячься в тени или\nоставайся неподвижным."
+	lbl_alert_sub.add_theme_color_override("font_color", Color("#c7bfb5"))
 	alert_vbox.add_child(lbl_alert_sub)
 
 	prompt_e_panel = PanelContainer.new()
 	prompt_e_panel.visible = false
-	prompt_e_panel.position = Vector2(540, 290)
-	prompt_e_panel.add_theme_stylebox_override("panel", _make_dark_card_style(Color("#ffd166")))
+	prompt_e_panel.position = Vector2(460, 500)
+	prompt_e_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	prompt_e_panel.add_theme_stylebox_override("panel", _make_dark_card_style(Color("#b88636")))
 	hud.add_child(prompt_e_panel)
+	var prompt_hbox := HBoxContainer.new()
+	prompt_e_panel.add_child(prompt_hbox)
+	if tex_ui_key_e != null:
+		var key_rect := TextureRect.new()
+		key_rect.texture = tex_ui_key_e
+		key_rect.custom_minimum_size = Vector2(16, 16)
+		key_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		prompt_hbox.add_child(key_rect)
 	lbl_prompt_e = Label.new()
-	prompt_e_panel.add_child(lbl_prompt_e)
+	prompt_hbox.add_child(lbl_prompt_e)
 
+	_build_inventory_and_hotbar_modal(hud)
+	_build_settings_modal(hud)
+
+func _build_inventory_and_hotbar_modal(hud: CanvasLayer) -> void:
 	inv_panel = PanelContainer.new()
 	inv_panel.visible = false
-	inv_panel.position = Vector2(260, 120)
-	inv_panel.custom_minimum_size = Vector2(620, 380)
-	inv_panel.add_theme_stylebox_override("panel", _make_dark_card_style(Color("#455266")))
+	inv_panel.position = Vector2(236, 76)
+	inv_panel.custom_minimum_size = Vector2(680, 440)
+	inv_panel.add_theme_stylebox_override("panel", _make_dark_card_style(Color("#524b44")))
 	hud.add_child(inv_panel)
 
 	var wb_vbox := VBoxContainer.new()
+	wb_vbox.add_theme_constant_override("separation", 8)
 	inv_panel.add_child(wb_vbox)
+
 	var wb_top := HBoxContainer.new()
+	wb_top.add_theme_constant_override("separation", 6)
 	wb_vbox.add_child(wb_top)
-	var wb_title := Label.new()
-	wb_title.text = "Верстак"
-	wb_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	wb_top.add_child(wb_title)
+
+	var tab_bag := Button.new()
+	tab_bag.custom_minimum_size = Vector2(175, 36)
+	tab_bag.text = "🎒 Рюкзак и Снаряжение"
+	tab_bag.pressed.connect(func():
+		current_bag_tab = 0
+		play_sfx("ui")
+		_refresh_inventory_ui()
+	)
+	wb_top.add_child(tab_bag)
+
+	var tab_build := Button.new()
+	tab_build.custom_minimum_size = Vector2(175, 36)
+	tab_build.text = "🧱 Палитра стройки"
+	tab_build.pressed.connect(func():
+		current_bag_tab = 1
+		play_sfx("ui")
+		_refresh_inventory_ui()
+	)
+	wb_top.add_child(tab_build)
+
+	var tab_craft := Button.new()
+	tab_craft.custom_minimum_size = Vector2(155, 36)
+	tab_craft.text = "⚒ Крафт (Верстак)"
+	tab_craft.pressed.connect(func():
+		current_bag_tab = 2
+		play_sfx("ui")
+		_refresh_inventory_ui()
+	)
+	wb_top.add_child(tab_craft)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wb_top.add_child(spacer)
+
 	var btn_close := Button.new()
+	btn_close.custom_minimum_size = Vector2(44, 36)
 	btn_close.text = " ✕ "
-	btn_close.pressed.connect(func(): inv_panel.visible = false)
+	btn_close.pressed.connect(func():
+		play_sfx("ui")
+		inv_panel.visible = false
+	)
 	wb_top.add_child(btn_close)
 
 	var wb_split := HBoxContainer.new()
 	wb_split.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	wb_split.add_theme_constant_override("separation", 10)
 	wb_vbox.add_child(wb_split)
+
 	var scroll_l := ScrollContainer.new()
-	scroll_l.custom_minimum_size = Vector2(250, 300)
+	scroll_l.custom_minimum_size = Vector2(265, 340)
 	wb_split.add_child(scroll_l)
-	inv_recipes_box = VBoxContainer.new()
-	scroll_l.add_child(inv_recipes_box)
+	inv_list_box = VBoxContainer.new()
+	inv_list_box.add_theme_constant_override("separation", 4)
+	scroll_l.add_child(inv_list_box)
 
 	var right_card := PanelContainer.new()
 	right_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	right_card.add_theme_stylebox_override("panel", _make_dark_card_style(Color("#2d3644")))
+	right_card.add_theme_stylebox_override("panel", _make_dark_card_style(Color("#3b3733")))
 	wb_split.add_child(right_card)
+
 	var r_vbox := VBoxContainer.new()
+	r_vbox.add_theme_constant_override("separation", 8)
 	right_card.add_child(r_vbox)
+
 	lbl_detail_title = Label.new()
+	lbl_detail_title.add_theme_color_override("font_color", Color("#f2ead8"))
 	r_vbox.add_child(lbl_detail_title)
+
 	lbl_detail_desc = Label.new()
+	lbl_detail_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl_detail_desc.add_theme_color_override("font_color", Color("#b8b0a4"))
 	r_vbox.add_child(lbl_detail_desc)
+
 	lbl_detail_ing = Label.new()
+	lbl_detail_ing.add_theme_color_override("font_color", Color("#d99136"))
 	r_vbox.add_child(lbl_detail_ing)
-	btn_craft_action = Button.new()
-	btn_craft_action.text = "Создать"
-	btn_craft_action.pressed.connect(func():
-		var recipes: Array = player.surv.recipes_db
-		if selected_recipe_index >= 0 and selected_recipe_index < recipes.size():
-			var rec: Dictionary = recipes[selected_recipe_index]
-			var cost: Dictionary = rec.get("cost", {})
-			if player.surv.has_items(cost):
-				for ck in cost.keys():
-					player.surv.remove_item(str(ck), int(cost[ck]))
-				player.surv.add_item(str(rec.get("out", "wood")), int(rec.get("count", 1)))
-				play_sfx("build")
-				_refresh_inventory_ui()
+
+	detail_actions_box = VBoxContainer.new()
+	detail_actions_box.add_theme_constant_override("separation", 6)
+	r_vbox.add_child(detail_actions_box)
+
+func _build_settings_modal(hud: CanvasLayer) -> void:
+	settings_panel = PanelContainer.new()
+	settings_panel.visible = false
+	settings_panel.position = Vector2(256, 62)
+	settings_panel.custom_minimum_size = Vector2(580, 456)
+	settings_panel.add_theme_stylebox_override("panel", _make_dark_card_style(Color("#524b44")))
+	hud.add_child(settings_panel)
+
+	var root_vbox := VBoxContainer.new()
+	root_vbox.add_theme_constant_override("separation", 10)
+	settings_panel.add_child(root_vbox)
+
+	var top_bar := HBoxContainer.new()
+	root_vbox.add_child(top_bar)
+	var title := Label.new()
+	title.text = "⚙  Настройки игры и управления"
+	title.add_theme_color_override("font_color", Color("#f2ead8"))
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top_bar.add_child(title)
+
+	var btn_close := Button.new()
+	btn_close.custom_minimum_size = Vector2(44, 34)
+	btn_close.text = " ✕ "
+	btn_close.pressed.connect(func():
+		play_sfx("ui")
+		settings_panel.visible = false
 	)
-	r_vbox.add_child(btn_craft_action)
+	top_bar.add_child(btn_close)
+
+	var sep := HSeparator.new()
+	root_vbox.add_child(sep)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root_vbox.add_child(scroll)
+
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 10)
+	scroll.add_child(list)
+
+	_add_slider_setting(list, "Громкость звука", 0.0, 1.0, 0.05, master_volume, func(v: float):
+		master_volume = v
+	)
+	_add_slider_setting(list, "Скорость шага персонажа", 0.50, 1.40, 0.05, player.move_speed_mult, func(v: float):
+		if is_instance_valid(player):
+			player.move_speed_mult = v
+	)
+	_add_slider_setting(list, "Размер правых кнопок", 0.75, 1.35, 0.05, mobile_hud.button_scale, func(v: float):
+		if mobile_hud:
+			mobile_hud.button_scale = v
+	)
+	_add_slider_setting(list, "Размер виртуального джойстика", 0.85, 1.50, 0.05, mobile_hud.joy_size_scale, func(v: float):
+		if mobile_hud:
+			mobile_hud.joy_size_scale = v
+	)
+	_add_slider_setting(list, "Непрозрачность кнопок HUD", 0.40, 1.0, 0.05, mobile_hud.hud_opacity, func(v: float):
+		if mobile_hud:
+			mobile_hud.hud_opacity = v
+	)
+	_add_slider_setting(list, "Приближение камеры (Zoom)", 1.40, 2.80, 0.10, camera.zoom.x, func(v: float):
+		if is_instance_valid(camera):
+			camera.zoom = Vector2(v, v)
+	)
+
+	var chk_float_joy := CheckButton.new()
+	chk_float_joy.text = "Плавающий центр джойстика (подстраивается под палец)"
+	chk_float_joy.button_pressed = mobile_hud.floating_joystick
+	chk_float_joy.toggled.connect(func(on: bool):
+		if mobile_hud:
+			mobile_hud.floating_joystick = on
+		play_sfx("ui")
+	)
+	list.add_child(chk_float_joy)
+
+	var chk_aim := CheckButton.new()
+	chk_aim.text = "Автоприцеливание на ближайшего титана / стену"
+	chk_aim.button_pressed = mobile_hud.auto_aim_enabled
+	chk_aim.toggled.connect(func(on: bool):
+		if mobile_hud:
+			mobile_hud.auto_aim_enabled = on
+		play_sfx("ui")
+	)
+	list.add_child(chk_aim)
+
+	var chk_shake := CheckButton.new()
+	chk_shake.text = "Тряска экрана при ударах клинками"
+	chk_shake.button_pressed = screen_shake_enabled
+	chk_shake.toggled.connect(func(on: bool):
+		screen_shake_enabled = on
+		play_sfx("ui")
+	)
+	list.add_child(chk_shake)
+
+func _add_slider_setting(parent: VBoxContainer, label_text: String, min_v: float, max_v: float, step_v: float, initial_v: float, on_change: Callable) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	parent.add_child(row)
+
+	var lbl := Label.new()
+	lbl.custom_minimum_size = Vector2(245, 28)
+	lbl.text = "%s: %d%%" % [label_text, int(round(initial_v * 100.0))]
+	lbl.add_theme_color_override("font_color", Color("#d8d2c8"))
+	row.add_child(lbl)
+
+	var slider := HSlider.new()
+	slider.custom_minimum_size = Vector2(235, 28)
+	slider.min_value = min_v
+	slider.max_value = max_v
+	slider.step = step_v
+	slider.value = initial_v
+	slider.value_changed.connect(func(val: float):
+		lbl.text = "%s: %d%%" % [label_text, int(round(val * 100.0))]
+		on_change.call(val)
+	)
+	row.add_child(slider)
