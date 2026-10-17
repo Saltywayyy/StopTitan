@@ -18,6 +18,7 @@ var titans_killed_count: int = 0
 
 var master_volume: float = 0.80
 var screen_shake_enabled: bool = true
+var silhouette_radius_cells: float = 8.0
 
 var sky_modulate: CanvasModulate
 var atmosphere_layer: CanvasLayer
@@ -99,14 +100,20 @@ var tex_ui_water: Texture2D
 var tex_ui_key_e: Texture2D
 var tex_ui_panel: Texture2D
 
+var tex_hero_silhouette: ImageTexture
+var tex_colonist_silhouette: ImageTexture
+
 var sfx_player: AudioStreamPlayer
 var sfx_playback: AudioStreamGeneratorPlayback
 
 var ground_map: Dictionary = {}
 var wall_map: Dictionary = {}
 var decor_map: Dictionary = {}
+var door_anim_progress: Dictionary = {}
+
 var _ground_tint_cache: Dictionary = {}
 var _grass_variant_cache: Dictionary = {}
+var _watchtower_set: Dictionary = {}
 var ash_piles: Array[Vector2] = []
 
 var wall_torches: Array[Vector2i] = [
@@ -134,6 +141,10 @@ var selected_block_id: int = 1
 var selected_hotbar_slot: int = 0
 var build_mode_active: bool = false
 var screen_shake_amount: float = 0.0
+# ПУНКТ 3.2 и 3.4: Микро-заморозка кадра (hit-stop) и всплывающая боевая подсказка
+var hit_stop_timer: float = 0.0
+var combat_hint_text: String = ""
+var combat_hint_timer: float = 0.0
 
 var hud_bars_ctrl: Control
 var clock_card_ctrl: PanelContainer
@@ -161,6 +172,8 @@ var selected_bag_entry_index: int = 0
 var selected_recipe_index: int = 0
 
 var settings_panel: PanelContainer
+var death_panel: PanelContainer
+var lbl_death_stats: Label
 
 func _ready() -> void:
 	get_viewport().snap_2d_transforms_to_pixel = true
@@ -177,12 +190,22 @@ func _ready() -> void:
 	_setup_world_layer()
 	_generate_fortress_from_reference()
 	_setup_player()
+	_build_entity_silhouette_textures()
 	_spawn_campfire_point_lights()
 	_spawn_initial_colonists()
 	_spawn_initial_titans()
 	atmosphere_layer = Phase1Visuals.create_atmosphere_vignette_layer()
 	add_child(atmosphere_layer)
 	_setup_reference_hud()
+	show_combat_hint("Наведи прицел на титана или стену: кнопки L / R (Q / E) — крюки, Меч (F) — серия ударов!")
+
+func show_combat_hint(msg: String, duration: float = 5.5) -> void:
+	combat_hint_text = msg
+	combat_hint_timer = duration
+
+func trigger_hit_stop(duration: float = 0.055) -> void:
+	hit_stop_timer = maxf(hit_stop_timer, duration)
+	Engine.time_scale = 0.06
 
 func _load_config() -> void:
 	var file_path := "res://data/config.json"
@@ -192,6 +215,11 @@ func _load_config() -> void:
 		if typeof(parsed) == TYPE_DICTIONARY:
 			config = parsed
 	blocks_db = config.get("blocks", {})
+
+	if not config.has("player"):
+		config["player"] = {}
+	if not config["player"].has("slash_reach_cells"):
+		config["player"]["slash_reach_cells"] = 1.65
 
 	if not blocks_db.has("9"):
 		blocks_db["9"] = {
@@ -257,6 +285,15 @@ func _cycle_day_night_weather() -> void:
 		game_hour = 8.5
 	play_sfx("ui")
 	queue_redraw()
+
+func _build_entity_silhouette_textures() -> void:
+	if is_instance_valid(player) and player.tex_idle != null:
+		tex_hero_silhouette = TitanEntity._build_alpha_outline_texture(player.tex_idle)
+	var col_sample := ColonistEntity.new()
+	col_sample._rebuild_sprites()
+	if col_sample.tex_idle != null:
+		tex_colonist_silhouette = TitanEntity._build_alpha_outline_texture(col_sample.tex_idle)
+	col_sample.free()
 
 func _generate_all_pixel_art_tiles() -> void:
 	light_tex = Phase1Visuals.build_natural_torch_light_texture()
@@ -1213,6 +1250,10 @@ func _setup_world_layer() -> void:
 	add_child(fx_layer)
 
 func _generate_fortress_from_reference() -> void:
+	_watchtower_set.clear()
+	for tw in watchtowers:
+		_watchtower_set[tw] = true
+
 	for x in range(-MAP_RADIUS, MAP_RADIUS + 1):
 		for y in range(-MAP_RADIUS, MAP_RADIUS + 1):
 			ground_map[Vector2i(x, y)] = 0
@@ -1370,11 +1411,13 @@ func _set_block(cell: Vector2i, b_id: int, recalc_support: bool = true) -> void:
 		"is_window": (b_id == 9 or bool(b_info.get("is_window", false))),
 		"lets_light": (b_id == 9 or bool(b_info.get("lets_light", false))),
 		"door_open": false,
+		"is_side": false,
 		"hookable": bool(b_info.get("hookable", true)),
 		"drop": str(b_info.get("drop", "wood")),
 		"body": body,
 		"col": col
 	}
+	door_anim_progress[cell] = 0.0
 	if recalc_support:
 		BuildSystem.update_autowall_around(self, cell)
 		if b_id == 4 or b_id == 2 or b_id == 1 or b_id == 3 or b_id == 9:
@@ -1386,6 +1429,7 @@ func _remove_wall(cell: Vector2i, recalc_support: bool = true) -> void:
 		if is_instance_valid(col_or_body(cell)):
 			wall_map[cell]["body"].queue_free()
 		wall_map.erase(cell)
+		door_anim_progress.erase(cell)
 		if recalc_support:
 			BuildSystem.update_autowall_around(self, cell)
 		queue_redraw()
@@ -1433,9 +1477,7 @@ func _setup_player() -> void:
 	camera.position_smoothing_enabled = true
 	camera.position_smoothing_speed = 8.0
 	player.add_child(camera)
-
-# Умеренные масштабы и яркость источников света (под текстуру 256x256 — больше никакого пересвета!)
-func _spawn_campfire_point_lights() -> void:
+	func _spawn_campfire_point_lights() -> void:
 	for ch in campfire_lights:
 		if is_instance_valid(ch):
 			ch.queue_free()
@@ -1500,10 +1542,35 @@ func get_recruited_colonists() -> Array[ColonistEntity]:
 			res.append(ch)
 	return res
 
+func has_combat_line_of_sight(origin: Vector2, target_pos: Vector2) -> bool:
+	var diff: Vector2 = target_pos - origin
+	var dist: float = diff.length()
+	if dist <= 6.0:
+		return true
+	var dir: Vector2 = diff / dist
+	var start_cell: Vector2i = _world_to_cell(origin)
+	var end_cell: Vector2i = _world_to_cell(target_pos)
+	var d: float = 6.0
+	while d < dist - 4.0:
+		var c: Vector2i = _world_to_cell(origin + dir * d)
+		if c != start_cell and c != end_cell and wall_map.has(c):
+			var w_data: Dictionary = wall_map[c]
+			var is_open_door: bool = bool(w_data.get("is_door", false)) and bool(w_data.get("door_open", false))
+			if not is_open_door:
+				return false
+		d += 5.0
+	var mid_cell: Vector2i = _world_to_cell((origin + target_pos) * 0.5)
+	if wall_map.has(mid_cell):
+		var mw: Dictionary = wall_map[mid_cell]
+		var is_op: bool = bool(mw.get("is_door", false)) and bool(mw.get("door_open", false))
+		if not is_op:
+			return false
+	return true
+
 func colonist_shoot_nearest_titan(origin: Vector2, max_range: float, dmg: float) -> Dictionary:
 	for child in titans_layer.get_children():
 		if child is TitanEntity and child.state != TitanEntity.State.DYING and child.state != TitanEntity.State.DORMANT:
-			if origin.distance_to(child.global_position) <= max_range:
+			if origin.distance_to(child.global_position) <= max_range and has_combat_line_of_sight(origin, child.global_position):
 				child.nape_hp -= dmg
 				if child.nape_hp <= 0.0:
 					child.nape_hp = 0.0
@@ -1526,35 +1593,53 @@ func spawn_titan_at(pos: Vector2, p_type: String) -> void:
 	t.apply_config(t_cfg, p_type)
 	titans_layer.add_child(t)
 
+# ПУНКТ 3.4: Понятный зацеп крюка за весь прямоугольник спрайта титана (а не только за узкую точку 15px у стоп!)
 func raycast_hook_anchor(origin: Vector2, dir: Vector2, max_dist: float) -> Dictionary:
-	var d: float = 10.0
+	var d: float = 8.0
 	while d <= max_dist:
 		var pt: Vector2 = origin + dir * d
 		for child in titans_layer.get_children():
 			if child is TitanEntity and child.state != TitanEntity.State.DYING:
-				if pt.distance_to(child.global_position) <= 15.0:
-					return {"hit": true, "pos": child.global_position}
+				var is_cr: bool = (child.titan_type == "crawler")
+				var body_rect := Rect2(
+					child.global_position + Vector2(-20.0 if is_cr else -18.0, -26.0 if is_cr else -52.0),
+					Vector2(40.0 if is_cr else 36.0, 26.0 if is_cr else 50.0)
+				)
+				if body_rect.has_point(pt):
+					var clamp_anchor: Vector2 = pt.clamp(body_rect.position + Vector2(4, 4), body_rect.end - Vector2(4, 4))
+					return {"hit": true, "pos": clamp_anchor, "kind": "titan"}
 		var c: Vector2i = _world_to_cell(pt)
 		if wall_map.has(c) and bool(wall_map[c].get("hookable", true)):
-			return {"hit": true, "pos": Vector2(c * CELL_SIZE) + Vector2(8, 8)}
-		d += 6.0
+			var b_id: int = int(wall_map[c].get("id", 0))
+			return {"hit": true, "pos": Vector2(c * CELL_SIZE) + Vector2(8, 8), "kind": "tree" if b_id == 8 else "wall"}
+		d += 5.0
 	return {"hit": false}
 
+# ПУНКТ 3.2: Попадание клинками вызывает искры, тряску камеры и короткую заморозку кадра (hit-stop)
 func player_slash_attack(origin: Vector2, _look_dir: Vector2, speed: float, base_dmg: float, max_spd: float) -> Dictionary:
 	var best_res := {"hit": false}
+	var reach_px: float = (player.slash_reach_cells if is_instance_valid(player) else 1.65) * float(CELL_SIZE)
 	for child in titans_layer.get_children():
 		if child is TitanEntity and child.state != TitanEntity.State.DYING:
-			if origin.distance_to(child.global_position) <= 46.0:
+			if origin.distance_to(child.global_position) <= reach_px + 10.0 and has_combat_line_of_sight(origin, child.global_position):
 				var res: Dictionary = child.take_blade_hit(origin, speed, base_dmg, max_spd)
 				if bool(res.get("hit", false)):
 					best_res = res
 					if screen_shake_enabled:
-						screen_shake_amount = 5.0
+						screen_shake_amount = 5.5
+					trigger_hit_stop(0.055)
+					for k in range(5):
+						var sp_off := Vector2(randf_range(-10.0, 10.0), randf_range(-28.0, -8.0))
+						hit_sparks.append({
+							"pos": child.global_position + sp_off,
+							"vel": Vector2(randf_range(-85.0, 85.0), randf_range(-95.0, 35.0)),
+							"timer": 0.26,
+							"col": Color("#fff3b0") if k % 2 == 0 else Color("#ff7b29")
+						})
 					play_sfx("hit")
 					break
 	return best_res
 
-# НОВАЯ ФУНКЦИЯ РУБКИ ДЕРЕВЬЕВ И ДОБЫЧИ КАМНЯ / ТРАВ В ЛЕСУ
 func player_harvest_nearby(origin: Vector2, look_dir: Vector2) -> bool:
 	var p_cell: Vector2i = _world_to_cell(origin)
 	var step_dir := Vector2i(int(round(look_dir.x)), int(round(look_dir.y)))
@@ -1565,7 +1650,6 @@ func player_harvest_nearby(origin: Vector2, look_dir: Vector2) -> bool:
 	if selected_hotbar_slot < combat_hotbar_slots.size():
 		active_tool_id = str(combat_hotbar_slots[selected_hotbar_slot].get("id", ""))
 
-	# Ищем ближайшее дерево или ресурсный объект перед героем и вокруг него
 	var check_cells: Array[Vector2i] = [
 		p_cell + step_dir,
 		p_cell + step_dir * 2,
@@ -1576,7 +1660,6 @@ func player_harvest_nearby(origin: Vector2, look_dir: Vector2) -> bool:
 	]
 
 	for c in check_cells:
-		# 1. Рубка дерева (b_id == 8)
 		if wall_map.has(c) and int(wall_map[c].get("id", 0)) == 8:
 			var dmg: int = 20 if active_tool_id == "axe" else 12
 			var cur_hp: int = int(wall_map[c].get("hp", 36)) - dmg
@@ -1584,7 +1667,7 @@ func player_harvest_nearby(origin: Vector2, look_dir: Vector2) -> bool:
 			play_sfx("build")
 			if screen_shake_enabled:
 				screen_shake_amount = 2.2
-			hit_sparks.append({"pos": Vector2(c * CELL_SIZE) + Vector2(8, 4), "timer": 0.22, "col": Color("#b88454")})
+			hit_sparks.append({"pos": Vector2(c * CELL_SIZE) + Vector2(8, 4), "vel": Vector2(randf_range(-35, 35), -40), "timer": 0.22, "col": Color("#b88454")})
 			if cur_hp <= 0:
 				_remove_wall(c, false)
 				decor_map[c] = "stump"
@@ -1593,7 +1676,6 @@ func player_harvest_nearby(origin: Vector2, look_dir: Vector2) -> bool:
 			queue_redraw()
 			return true
 
-		# 2. Добыча валунов, пней, поваленных брёвен и кустов
 		if decor_map.has(c):
 			var kind: String = str(decor_map[c])
 			if kind == "rock":
@@ -1601,14 +1683,14 @@ func player_harvest_nearby(origin: Vector2, look_dir: Vector2) -> bool:
 				player.surv.add_item("stone", 2 if active_tool_id == "pickaxe" else 1)
 				if active_tool_id == "pickaxe" or randi() % 2 == 0:
 					player.surv.add_item("core_stone", 1)
-				hit_sparks.append({"pos": Vector2(c * CELL_SIZE) + Vector2(8, 8), "timer": 0.22, "col": Color("#9aa1ab")})
+				hit_sparks.append({"pos": Vector2(c * CELL_SIZE) + Vector2(8, 8), "vel": Vector2(randf_range(-40, 40), -45), "timer": 0.22, "col": Color("#9aa1ab")})
 				play_sfx("build")
 				queue_redraw()
 				return true
 			elif kind == "stump" or kind == "log":
 				decor_map.erase(c)
 				player.surv.add_item("wood", 2)
-				hit_sparks.append({"pos": Vector2(c * CELL_SIZE) + Vector2(8, 8), "timer": 0.22, "col": Color("#b88454")})
+				hit_sparks.append({"pos": Vector2(c * CELL_SIZE) + Vector2(8, 8), "vel": Vector2(randf_range(-35, 35), -40), "timer": 0.22, "col": Color("#b88454")})
 				play_sfx("build")
 				queue_redraw()
 				return true
@@ -1626,6 +1708,33 @@ func on_titan_killed(pos: Vector2) -> void:
 	titans_killed_count += 1
 	queue_redraw()
 
+func on_player_died() -> void:
+	Engine.time_scale = 1.0
+	hit_stop_timer = 0.0
+	build_mode_active = false
+	if inv_panel:
+		inv_panel.visible = false
+	if settings_panel:
+		settings_panel.visible = false
+	if death_panel:
+		if lbl_death_stats:
+			lbl_death_stats.text = "Вы погибли на День %d (%02d:%02d).\nТитанов повержено: %d" % [
+				game_day, int(floor(game_hour)), int(floor(fmod(game_hour, 1.0) * 60.0)), titans_killed_count
+			]
+		death_panel.visible = true
+	play_sfx("roar")
+	queue_redraw()
+
+func respawn_player() -> void:
+	if not is_instance_valid(player):
+		return
+	var spawn_pos: Vector2 = Vector2(bed_cell * CELL_SIZE) + Vector2(8, 20)
+	player.respawn_at(spawn_pos)
+	if death_panel:
+		death_panel.visible = false
+	play_sfx("item")
+	queue_redraw()
+
 func _is_near_station(list: Array[Vector2i], radius_cells: float = 3.2) -> bool:
 	var pc: Vector2i = _world_to_cell(player.global_position)
 	for c in list:
@@ -1641,13 +1750,125 @@ func _is_titan_nearby(radius_cells: float) -> bool:
 				return true
 	return false
 
+func get_nearest_interactable() -> Dictionary:
+	if not is_instance_valid(player) or player.is_dead:
+		return {}
+	var p_pos: Vector2 = player.global_position
+	var pc: Vector2i = _world_to_cell(p_pos)
+	var best := {}
+	var best_dist: float = 9999.0
+
+	for x in range(pc.x - 2, pc.x + 3):
+		for y in range(pc.y - 2, pc.y + 3):
+			var c := Vector2i(x, y)
+			if wall_map.has(c) and bool(wall_map[c].get("is_door", false)):
+				var c_center: Vector2 = Vector2(c * CELL_SIZE) + Vector2(8, 8)
+				var d: float = p_pos.distance_to(c_center)
+				if d <= 25.0 and d < best_dist:
+					best_dist = d
+					var is_op: bool = bool(wall_map[c].get("door_open", false))
+					best = {
+						"kind": "door",
+						"cell": c,
+						"pos": c_center,
+						"prompt": "[E] Закрыть" if is_op else "[E] Открыть"
+					}
+
+	var bed_center: Vector2 = Vector2(bed_cell * CELL_SIZE) + Vector2(8, 8)
+	var d_bed: float = p_pos.distance_to(bed_center)
+	if d_bed <= 28.0 and d_bed < best_dist:
+		best_dist = d_bed
+		best = {"kind": "bed", "cell": bed_cell, "pos": bed_center, "prompt": "[E] Проснуться" if player.surv.is_sleeping else "[E] Спать"}
+
+	for wb_c in workbenches:
+		var wb_center: Vector2 = Vector2(wb_c * CELL_SIZE) + Vector2(8, 8)
+		var d_wb: float = p_pos.distance_to(wb_center)
+		if d_wb <= 28.0 and d_wb < best_dist:
+			best_dist = d_wb
+			best = {"kind": "workbench", "cell": wb_c, "pos": wb_center, "prompt": "[E] Верстак"}
+
+	for cr_c in loot_crates.keys():
+		var cr_center: Vector2 = Vector2(cr_c * CELL_SIZE) + Vector2(8, 8)
+		var d_cr: float = p_pos.distance_to(cr_center)
+		if d_cr <= 26.0 and d_cr < best_dist:
+			best_dist = d_cr
+			best = {"kind": "crate", "cell": cr_c, "pos": cr_center, "prompt": "[E] Взять припасы"}
+
+	var well_center: Vector2 = Vector2(water_well_cell * CELL_SIZE) + Vector2(8, 8)
+	var d_well: float = p_pos.distance_to(well_center)
+	if d_well <= 28.0 and d_well < best_dist:
+		best_dist = d_well
+		best = {"kind": "well", "cell": water_well_cell, "pos": well_center, "prompt": "[E] Набрать воды"}
+
+	return best
+
+func interact_nearby() -> void:
+	if player.is_dead:
+		return
+	var target: Dictionary = get_nearest_interactable()
+	if target.is_empty():
+		return
+
+	var kind: String = str(target.get("kind", ""))
+	var c: Vector2i = target.get("cell", Vector2i.ZERO)
+
+	match kind:
+		"door":
+			if wall_map.has(c):
+				var w: Dictionary = wall_map[c]
+				var is_op: bool = not bool(w.get("door_open", false))
+				w["door_open"] = is_op
+				var col: CollisionShape2D = w.get("col")
+				if is_instance_valid(col):
+					col.disabled = is_op
+				play_sfx("build")
+				queue_redraw()
+		"bed":
+			player.surv.is_sleeping = not player.surv.is_sleeping
+			play_sfx("item")
+		"workbench":
+			current_bag_tab = 2
+			_toggle_inventory_window()
+		"crate":
+			if loot_crates.has(c):
+				for item_id in loot_crates[c]:
+					player.surv.add_item(str(item_id), 1)
+				loot_crates.erase(c)
+				play_sfx("item")
+				queue_redraw()
+		"well":
+			player.surv.add_item("clean_water", 1)
+			player.surv.thirst = minf(100.0, player.surv.thirst + 35.0)
+			play_sfx("item")
+
 func _process(delta: float) -> void:
+	# Обработка восстановления скорости после микро-заморозки кадра (hit-stop) в реальном времени
+	var unscaled_dt: float = delta / maxf(0.01, Engine.time_scale)
+	if hit_stop_timer > 0.0:
+		hit_stop_timer -= unscaled_dt
+		if hit_stop_timer <= 0.0:
+			hit_stop_timer = 0.0
+			Engine.time_scale = 1.0
+
+	if combat_hint_timer > 0.0:
+		combat_hint_timer = maxf(0.0, combat_hint_timer - unscaled_dt)
+
 	_update_adaptive_hud_positions()
 	_update_game_clock_and_survival(delta)
-	_update_camera_shake(delta)
+	_update_camera_shake(unscaled_dt)
 	_update_cursor_and_input()
+
+	for d_cell in door_anim_progress.keys():
+		if wall_map.has(d_cell) and bool(wall_map[d_cell].get("is_door", false)):
+			var want_t: float = 1.0 if bool(wall_map[d_cell].get("door_open", false)) else 0.0
+			var cur_t: float = float(door_anim_progress[d_cell])
+			if absf(cur_t - want_t) > 0.005:
+				door_anim_progress[d_cell] = move_toward(cur_t, want_t, delta * 4.5)
+
 	for i in range(hit_sparks.size() - 1, -1, -1):
-		hit_sparks[i]["timer"] = float(hit_sparks[i]["timer"]) - delta
+		hit_sparks[i]["timer"] = float(hit_sparks[i]["timer"]) - unscaled_dt
+		if hit_sparks[i].has("vel"):
+			hit_sparks[i]["pos"] = Vector2(hit_sparks[i]["pos"]) + Vector2(hit_sparks[i]["vel"]) * unscaled_dt
 		if float(hit_sparks[i]["timer"]) <= 0.0:
 			hit_sparks.remove_at(i)
 	BuildSystem.update_roof_alphas(self, delta)
@@ -1674,10 +1895,12 @@ func _update_adaptive_hud_positions() -> void:
 		alert_panel.position = Vector2(vp.x - 262.0, 146.0)
 	if prompt_e_panel:
 		prompt_e_panel.position = Vector2((vp.x - 220.0) * 0.5, vp.y - BuildSystem.HOTBAR_HEIGHT - 78.0)
+	if death_panel:
+		death_panel.position = (vp - death_panel.custom_minimum_size) * 0.5
 
 func is_screen_point_on_ui(screen_pt: Vector2) -> bool:
 	var vp: Vector2 = get_viewport_rect().size
-	if (inv_panel and inv_panel.visible) or (settings_panel and settings_panel.visible):
+	if (inv_panel and inv_panel.visible) or (settings_panel and settings_panel.visible) or (death_panel and death_panel.visible):
 		return true
 	if screen_pt.y >= vp.y - (BuildSystem.HOTBAR_HEIGHT + 16.0):
 		var total_w: float = 10.0 * BuildSystem.HOTBAR_SLOT_W + 9.0 * BuildSystem.HOTBAR_GAP
@@ -1702,7 +1925,6 @@ func _update_game_clock_and_survival(delta: float) -> void:
 
 	var is_night: bool = (game_hour >= 20.0 or game_hour < 5.5)
 	var is_dusk_or_dawn: bool = ((game_hour >= 17.5 and game_hour < 20.0) or (game_hour >= 5.0 and game_hour < 7.0))
-	var p_cell: Vector2i = _world_to_cell(player.global_position)
 	var inside_shelter: bool = BuildSystem.is_player_inside_any_room(self)
 	var near_fire: bool = _is_near_station(campfires, 3.8)
 	var near_titan: bool = _is_titan_nearby(14.0)
@@ -1713,7 +1935,8 @@ func _update_game_clock_and_survival(delta: float) -> void:
 
 	var p_flicker: float = 1.0 + sin(t_sec * 11.0) * 0.04
 	var base_p_energy: float = lerpf(0.22, 0.58, night_factor)
-	if is_instance_valid(player_light):
+	if is_instance_valid(player_light) and is_instance_valid(player):
+		player_light.position = player_light.position.lerp(player.get_torch_hand_offset(), delta * 14.0)
 		player_light.energy = lerpf(player_light.energy, base_p_energy * p_flicker, delta * 8.0)
 
 	var base_cf_energy: float = lerpf(0.25, 0.62, night_factor)
@@ -1730,7 +1953,10 @@ func _update_game_clock_and_survival(delta: float) -> void:
 			var f_mult: float = 1.0 + cos(t_sec * 10.5 + float(i) * 1.3) * 0.04
 			sl.energy = lerpf(sl.energy, base_sc_energy * f_mult, delta * 6.0)
 
-	player.surv.update_survival(delta, hours_passed, is_night, near_fire, inside_shelter, near_titan, 1.2, -12.0 if is_winter_zone else 0.0, false)
+	if not player.is_dead:
+		player.surv.update_survival(delta, hours_passed, is_night, near_fire, inside_shelter, near_titan, 1.2, -12.0 if is_winter_zone else 0.0, false)
+		if player.surv.hp <= 0.0:
+			player._trigger_player_death()
 
 	var target_mod: Color = Phase1Visuals.sample_sky_color(game_hour, is_winter_zone)
 	sky_modulate.color = sky_modulate.color.lerp(target_mod, delta * 4.5)
@@ -1757,17 +1983,15 @@ func _update_game_clock_and_survival(delta: float) -> void:
 		]
 
 	if alert_panel:
-		alert_panel.visible = near_titan or is_winter_zone
+		alert_panel.visible = (near_titan or is_winter_zone) and not player.is_dead
 
 	if prompt_e_panel:
-		if p_cell.distance_to(bed_cell) <= 2.5:
-			prompt_e_panel.visible = true
-			lbl_prompt_e.text = "[E] Спать"
-		elif _is_near_station(workbenches, 2.5):
-			prompt_e_panel.visible = true
-			lbl_prompt_e.text = "[E] Открыть / Крафт"
-		else:
+		var near_obj: Dictionary = get_nearest_interactable()
+		if player.is_dead or near_obj.is_empty():
 			prompt_e_panel.visible = false
+		else:
+			prompt_e_panel.visible = true
+			lbl_prompt_e.text = str(near_obj.get("prompt", "[E] Действие"))
 
 func _update_camera_shake(delta: float) -> void:
 	if screen_shake_enabled and screen_shake_amount > 0.1:
@@ -1780,42 +2004,12 @@ func _update_camera_shake(delta: float) -> void:
 func _world_to_cell(pos: Vector2) -> Vector2i:
 	return Vector2i(floor(pos.x / float(CELL_SIZE)), floor(pos.y / float(CELL_SIZE)))
 
-func interact_nearby() -> void:
-	var pc: Vector2i = _world_to_cell(player.global_position)
-	if pc.distance_to(bed_cell) <= 2.8:
-		player.surv.is_sleeping = not player.surv.is_sleeping
-		play_sfx("item")
-		return
-	if _is_near_station(workbenches, 2.8):
-		current_bag_tab = 2
-		_toggle_inventory_window()
-		return
-	for x in range(pc.x - 2, pc.x + 3):
-		for y in range(pc.y - 2, pc.y + 3):
-			var c := Vector2i(x, y)
-			if wall_map.has(c) and bool(wall_map[c].get("is_door", false)):
-				var w: Dictionary = wall_map[c]
-				var is_op: bool = not bool(w.get("door_open", false))
-				w["door_open"] = is_op
-				var col: CollisionShape2D = w.get("col")
-				if is_instance_valid(col):
-					col.disabled = is_op
-				play_sfx("build")
-				queue_redraw()
-				return
-	for crate_cell in loot_crates.keys():
-		if Vector2(pc).distance_to(Vector2(crate_cell)) <= 2.5:
-			for item_id in loot_crates[crate_cell]:
-				player.surv.add_item(str(item_id), 1)
-			loot_crates.erase(crate_cell)
-			play_sfx("item")
-			return
-	if Vector2(pc).distance_to(Vector2(water_well_cell)) <= 2.8:
-		player.surv.add_item("clean_water", 1)
-		player.surv.thirst = minf(100.0, player.surv.thirst + 35.0)
-		play_sfx("item")
-
 func _input(event: InputEvent) -> void:
+	if death_panel and death_panel.visible:
+		if event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_ENTER or event.keycode == KEY_SPACE or event.keycode == KEY_R):
+			respawn_player()
+		return
+
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE:
 			if inv_panel and inv_panel.visible:
@@ -1861,6 +2055,8 @@ func _input(event: InputEvent) -> void:
 			return
 
 func _update_cursor_and_input() -> void:
+	if death_panel and death_panel.visible:
+		return
 	for i in range(1, 10):
 		if Input.is_key_pressed(KEY_0 + i):
 			select_hotbar_slot_index(i - 1, false)
@@ -1908,19 +2104,99 @@ func _draw_merged_garden_cell(cell: Vector2i, cell_rect: Rect2, mod_col: Color =
 		draw_rect(Rect2(pos + Vector2(13, 0), Vector2(2, 16)), c_wood_dark, true)
 		draw_rect(Rect2(pos + Vector2(15, 0), Vector2(1, 16)), c_out, true)
 
+# ПУНКТ 3.4: Наглядный прицел крюка (золотой/зелёный в зоне досягаемости, серо-красный при недолёте)
 func _draw_auto_aim_reticle() -> void:
 	if mobile_hud == null or not mobile_hud.auto_aim_enabled or not mobile_hud.has_valid_aim_target:
 		return
-	if build_mode_active:
+	if build_mode_active or player.is_dead:
 		return
 	var target_pt: Vector2 = mobile_hud.current_aim_target_pos
-	var pulse: float = 10.0 + sin(float(Time.get_ticks_msec()) * 0.01) * 2.0
-	var col := Color(1.0, 0.72, 0.22, 0.88)
+	var in_rng: bool = mobile_hud.aim_target_in_range
+	var t_kind: String = mobile_hud.aim_target_kind
+
+	var pulse: float = 9.0 + sin(float(Time.get_ticks_msec()) * 0.01) * 1.8
+	var col := Color(1.0, 0.78, 0.25, 0.90) if (in_rng and t_kind == "titan") else (Color(0.45, 0.92, 0.55, 0.72) if in_rng else Color(0.85, 0.35, 0.35, 0.75))
+
 	draw_arc(target_pt, pulse, 0.0, TAU, 24, col, 1.5)
 	draw_line(target_pt - Vector2(pulse + 4.0, 0), target_pt - Vector2(pulse - 3.0, 0), col, 1.5)
 	draw_line(target_pt + Vector2(pulse - 3.0, 0), target_pt + Vector2(pulse + 4.0, 0), col, 1.5)
 	draw_line(target_pt - Vector2(0, pulse + 4.0), target_pt - Vector2(0, pulse - 3.0), col, 1.5)
 	draw_line(target_pt + Vector2(0, pulse - 3.0), target_pt + Vector2(0, pulse + 4.0), col, 1.5)
+
+	if t_kind == "titan":
+		var badge_txt: String = "ЗАЦЕП [L/R]" if in_rng else "ДАЛЕКО"
+		BuildSystem._draw_world_cursor_badge(self, target_pt + Vector2(0, -pulse - 2.0), badge_txt, col, ThemeDB.fallback_font)
+
+func is_actor_occluded_by_grid(actor_world_pos: Vector2, is_large_titan: bool = false) -> bool:
+	var c: Vector2i = _world_to_cell(actor_world_pos)
+	var x_span: Array[int] = [-1, 0, 1] if is_large_titan else [0]
+	for dy in [1, 2]:
+		for dx in x_span:
+			var check_c := Vector2i(c.x + dx, c.y + dy)
+			if _watchtower_set.has(check_c):
+				return true
+			if wall_map.has(check_c):
+				var w_data: Dictionary = wall_map[check_c]
+				var b_id: int = int(w_data.get("id", 0))
+				if b_id == 8:
+					return true
+				elif dy == 1:
+					var open_door: bool = bool(w_data.get("is_door", false)) and bool(w_data.get("door_open", false))
+					if not open_door:
+						return true
+	return false
+
+func _draw_single_wall_or_tree_cell(c: Vector2i, is_winter: bool, is_night: bool, wall_sz: Vector2) -> void:
+	var w_data: Dictionary = wall_map[c]
+	var b_id: int = int(w_data.get("id", 1))
+	var pos := Vector2(c * CELL_SIZE)
+
+	if b_id == 8:
+		var tree_hash: int = ArtLoader.cell_hash(c, 61)
+		var is_oak: bool = ((tree_hash % 5) < 2)
+		var t_var: int = (tree_hash >> 3)
+
+		var tree_arr: Array[Texture2D] = (tex_oak_snow_variants if is_winter else tex_oak_variants) if is_oak else (tex_pine_snow_variants if is_winter else tex_pine_variants)
+		if tree_arr.is_empty():
+			tree_arr = [tex_oak_tree] if is_oak else [tex_pine_day]
+
+		var tree_tex: Texture2D = tree_arr[t_var % tree_arr.size()]
+		var base_sz := Vector2(32, 42) if is_oak else Vector2(32, 44)
+		var flip_tree: float = -1.0 if ((tree_hash & 2) != 0) else 1.0
+		var jx_t: float = float((tree_hash % 5) - 2)
+		var jy_t: float = float(((tree_hash >> 2) % 3) - 1)
+		var shade_v: float = 0.92 + float((tree_hash >> 7) % 3) * 0.04
+		var tree_mod := Color(shade_v, shade_v, shade_v, 1.0)
+
+		Phase1Visuals.draw_soft_shadow(self, pos + Vector2(12 + jx_t, 12 + jy_t), Vector2(32, 15), 0.46)
+		if tree_tex != null:
+			var draw_pos := pos + Vector2(8.0 + jx_t - base_sz.x * 0.5 + (base_sz.x if flip_tree < 0 else 0.0), 16.0 + jy_t - base_sz.y)
+			draw_texture_rect(tree_tex, Rect2(draw_pos, Vector2(base_sz.x * flip_tree, base_sz.y)), false, tree_mod)
+		return
+
+	var is_side_orient: bool = bool(w_data.get("is_side", false))
+
+	if bool(w_data.get("is_door", false)):
+		var is_open: bool = bool(w_data.get("door_open", false))
+		var anim_t: float = float(door_anim_progress.get(c, 1.0 if is_open else 0.0))
+		Phase1Visuals.draw_soft_shadow(self, pos + Vector2(11, 15), Vector2(22, 10), lerpf(0.46, 0.22, anim_t))
+		var door_tex: Texture2D = BuildSystem.get_door_draw_texture(is_side_orient, anim_t)
+		if door_tex != null:
+			draw_texture_rect(door_tex, Rect2(pos + Vector2(0, -8), Vector2(16, 24)), false)
+		return
+
+	if b_id == 9 or bool(w_data.get("is_window", false)):
+		Phase1Visuals.draw_soft_shadow(self, pos + Vector2(11, 15), Vector2(24, 11), 0.46)
+		var lit_now: bool = is_night and _is_window_room_lit(c)
+		var win_tex: Texture2D = BuildSystem.get_window_draw_texture(self, is_side_orient, lit_now)
+		if win_tex != null:
+			draw_texture_rect(win_tex, Rect2(pos + Vector2(0, -8), Vector2(16, 24)), false)
+		return
+
+	Phase1Visuals.draw_soft_shadow(self, pos + Vector2(11, 15), Vector2(24, 11), 0.46)
+	var w_tex: Texture2D = BuildSystem.get_wall_draw_texture(self, c, b_id)
+	if w_tex != null:
+		draw_texture_rect(w_tex, Rect2(pos + Vector2(0, -8), wall_sz), false, _ground_tint_cache.get(c, Color.WHITE))
 
 func _draw() -> void:
 	var p_cell: Vector2i = _world_to_cell(player.global_position)
@@ -2046,85 +2322,106 @@ func _draw() -> void:
 		Phase1Visuals.draw_soft_shadow(self, cr_pos + Vector2(10, 12), Vector2(18, 9), 0.42)
 		draw_texture_rect(tex_crate, Rect2(cr_pos, cr_sz), false)
 
+	var entities_by_row: Dictionary = {}
+	var occluded_draw_queue: Array[Dictionary] = []
+	var sil_max_dist_px: float = silhouette_radius_cells * float(CELL_SIZE)
+
+	if is_instance_valid(player):
+		var p_occ: bool = is_actor_occluded_by_grid(player.global_position, false)
+		if p_occ:
+			occluded_draw_queue.append({"kind": "player", "ref": player})
+		else:
+			var p_row: int = _world_to_cell(player.global_position).y
+			if not entities_by_row.has(p_row):
+				entities_by_row[p_row] = []
+			entities_by_row[p_row].append({"y": player.global_position.y, "kind": "player", "ref": player})
+
+	for ch in colonists_layer.get_children():
+		if ch is ColonistEntity:
+			var c_occ: bool = is_actor_occluded_by_grid(ch.global_position, false)
+			if c_occ:
+				if ch.global_position.distance_to(player.global_position) <= sil_max_dist_px:
+					occluded_draw_queue.append({"kind": "colonist", "ref": ch})
+			else:
+				var c_row: int = _world_to_cell(ch.global_position).y
+				if not entities_by_row.has(c_row):
+					entities_by_row[c_row] = []
+				entities_by_row[c_row].append({"y": ch.global_position.y, "kind": "colonist", "ref": ch})
+
+	for ch in titans_layer.get_children():
+		if ch is TitanEntity:
+			var t_occ: bool = is_actor_occluded_by_grid(ch.global_position, true)
+			if t_occ:
+				if ch.global_position.distance_to(player.global_position) <= sil_max_dist_px:
+					occluded_draw_queue.append({"kind": "titan", "ref": ch})
+			else:
+				var t_row: int = _world_to_cell(ch.global_position).y
+				if not entities_by_row.has(t_row):
+					entities_by_row[t_row] = []
+				entities_by_row[t_row].append({"y": ch.global_position.y, "kind": "titan", "ref": ch})
+
 	var wall_sz: Vector2 = ArtLoader.get_frame_size("wall_stone")
+	var tower_sz: Vector2 = ArtLoader.get_frame_size("tower")
+
 	for y in range(p_cell.y - view_h, p_cell.y + view_h + 1):
 		for x in range(p_cell.x - view_w, p_cell.x + view_w + 1):
 			var c := Vector2i(x, y)
-			if not wall_map.has(c):
-				continue
-			var w_data: Dictionary = wall_map[c]
-			var b_id: int = int(w_data.get("id", 1))
-			var pos := Vector2(c * CELL_SIZE)
+			if wall_map.has(c):
+				_draw_single_wall_or_tree_cell(c, is_winter, is_night, wall_sz)
+			if _watchtower_set.has(c):
+				var tpos := Vector2(c * CELL_SIZE)
+				Phase1Visuals.draw_soft_shadow(self, tpos + Vector2(13, 14), Vector2(32, 14), 0.52)
+				draw_texture_rect(tex_tower_sprite, Rect2(tpos - Vector2(4, 18), tower_sz), false)
 
-			if b_id == 8:
-				var tree_hash: int = ArtLoader.cell_hash(c, 61)
-				var is_oak: bool = ((tree_hash % 5) < 2)
-				var t_var: int = (tree_hash >> 3)
-
-				var tree_arr: Array[Texture2D] = (tex_oak_snow_variants if is_winter else tex_oak_variants) if is_oak else (tex_pine_snow_variants if is_winter else tex_pine_variants)
-				if tree_arr.is_empty():
-					tree_arr = [tex_oak_tree] if is_oak else [tex_pine_day]
-
-				var tree_tex: Texture2D = tree_arr[t_var % tree_arr.size()]
-				var base_sz := Vector2(32, 42) if is_oak else Vector2(32, 44)
-				var flip_tree: float = -1.0 if ((tree_hash & 2) != 0) else 1.0
-				var jx_t: float = float((tree_hash % 5) - 2)
-				var jy_t: float = float(((tree_hash >> 2) % 3) - 1)
-				var shade_v: float = 0.92 + float((tree_hash >> 7) % 3) * 0.04
-				var tree_mod := Color(shade_v, shade_v, shade_v, 1.0)
-
-				Phase1Visuals.draw_soft_shadow(self, pos + Vector2(12 + jx_t, 12 + jy_t), Vector2(32, 15), 0.46)
-				if tree_tex != null:
-					var draw_pos := pos + Vector2(8.0 + jx_t - base_sz.x * 0.5 + (base_sz.x if flip_tree < 0 else 0.0), 16.0 + jy_t - base_sz.y)
-					draw_texture_rect(tree_tex, Rect2(draw_pos, Vector2(base_sz.x * flip_tree, base_sz.y)), false, tree_mod)
-				continue
-
-			if bool(w_data.get("is_door", false)):
-				var is_open: bool = bool(w_data.get("door_open", false))
-				Phase1Visuals.draw_soft_shadow(self, pos + Vector2(11, 15), Vector2(22, 10), 0.25 if is_open else 0.46)
-				var door_idx: int = 1 if (is_open and tex_block_door_frames.size() > 1) else 0
-				var door_tex: Texture2D = tex_block_door_frames[door_idx] if not tex_block_door_frames.is_empty() else (tex_gate_open if is_open else tex_gate_closed)
-				draw_texture_rect(door_tex, Rect2(pos + Vector2(0, -8), ArtLoader.get_frame_size("block_door")), false)
-				continue
-
-			if b_id == 9 or bool(w_data.get("is_window", false)):
-				Phase1Visuals.draw_soft_shadow(self, pos + Vector2(11, 15), Vector2(24, 11), 0.46)
-				var lit_now: bool = is_night and _is_window_room_lit(c)
-				var win_idx: int = 1 if (lit_now and tex_block_window_frames.size() > 1) else 0
-				var win_tex: Texture2D = tex_block_window_frames[win_idx] if not tex_block_window_frames.is_empty() else BuildSystem.get_wall_draw_texture(self, c, b_id)
-				draw_texture_rect(win_tex, Rect2(pos + Vector2(0, -8), ArtLoader.get_frame_size("block_window")), false)
-				continue
-
-			Phase1Visuals.draw_soft_shadow(self, pos + Vector2(11, 15), Vector2(24, 11), 0.46)
-			var w_tex: Texture2D = BuildSystem.get_wall_draw_texture(self, c, b_id)
-			if w_tex != null:
-				draw_texture_rect(w_tex, Rect2(pos + Vector2(0, -8), wall_sz), false, _ground_tint_cache.get(c, Color.WHITE))
-
-	var tower_sz: Vector2 = ArtLoader.get_frame_size("tower")
-	for tw in watchtowers:
-		var tpos := Vector2(tw * CELL_SIZE)
-		Phase1Visuals.draw_soft_shadow(self, tpos + Vector2(13, 14), Vector2(32, 14), 0.52)
-		draw_texture_rect(tex_tower_sprite, Rect2(tpos - Vector2(4, 18), tower_sz), false)
+		if entities_by_row.has(y):
+			var row_list: Array = entities_by_row[y]
+			row_list.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a["y"]) < float(b["y"]))
+			for item in row_list:
+				var ent = item["ref"]
+				if is_instance_valid(ent) and ent.has_method("draw_entity_onto"):
+					ent.draw_entity_onto(self)
 
 	var torch_sz: Vector2 = ArtLoader.get_frame_size("wall_torch")
 	for i in range(wall_torches.size()):
 		var tc: Vector2i = wall_torches[i]
 		var fl_phase: int = (anim_tick + i) % 3
-		if has_wall_torch_png and not tex_wall_torch_frames.is_empty():
-			var tf_tex: Texture2D = tex_wall_torch_frames[(anim_tick + i) % tex_wall_torch_frames.size()]
-			draw_texture_rect(tf_tex, Rect2(Vector2(tc * CELL_SIZE) + Vector2(0, -8), torch_sz), false)
-		else:
-			var t_pos := Vector2(tc * CELL_SIZE) + Vector2(6, -5)
-			draw_rect(Rect2(t_pos + Vector2(1, 3), Vector2(2, 5)), Color("#3b2516"), true)
-		var spark_pos := Vector2(tc * CELL_SIZE) + Vector2(6 + (fl_phase - 1), -6 - (fl_phase % 2))
+		var is_side_wall: bool = (tc.x == -15 or tc.x == 14)
+		var side_shift: float = (4.0 if tc.x == -15 else -4.0) if is_side_wall else 0.0
+		var t_pos := Vector2(tc * CELL_SIZE) + Vector2(6.0 + side_shift, -5.0)
+		draw_rect(Rect2(t_pos + Vector2(1, 3), Vector2(2, 5)), Color("#3b2516"), true)
+		if is_side_wall:
+			draw_rect(Rect2(t_pos + Vector2(-1 if tc.x == -15 else 2, 5), Vector2(2, 2)), Color("#4a4f59"), true)
+		var spark_pos := Vector2(tc * CELL_SIZE) + Vector2(6.0 + side_shift + float(fl_phase - 1), -6.0 - float(fl_phase % 2))
 		draw_rect(Rect2(spark_pos, Vector2(3, 3)), Color("#ff9429"), true)
 		draw_rect(Rect2(spark_pos + Vector2(1, 1), Vector2(2, 2)), Color("#fff3b0"), true)
+
+	for occ in occluded_draw_queue:
+		var k: String = str(occ["kind"])
+		var ref_node = occ["ref"]
+		if not is_instance_valid(ref_node):
+			continue
+		if k == "player":
+			ref_node.draw_occluded_silhouette(self, tex_hero_silhouette)
+		elif k == "colonist":
+			ref_node.draw_occluded_silhouette(self, tex_colonist_silhouette)
+		elif k == "titan":
+			ref_node.draw_occluded_silhouette(self)
 
 	for sp in hit_sparks:
 		var sp_pos: Vector2 = sp["pos"]
 		var sp_col: Color = sp["col"]
-		draw_rect(Rect2(sp_pos + Vector2(-3, -3), Vector2(3, 3)), sp_col, true)
-		draw_rect(Rect2(sp_pos + Vector2(2, -1), Vector2(2, 2)), sp_col.lightened(0.25), true)
+		draw_rect(Rect2(sp_pos + Vector2(-2, -2), Vector2(3, 3)), sp_col, true)
+		draw_rect(Rect2(sp_pos + Vector2(1, -1), Vector2(2, 2)), sp_col.lightened(0.35), true)
+
+	if not build_mode_active and not player.is_dead:
+		var near_inter: Dictionary = get_nearest_interactable()
+		if not near_inter.is_empty():
+			var icell: Vector2i = near_inter["cell"]
+			var ipos := Vector2(icell * CELL_SIZE)
+			var pulse_a: float = 0.65 + sin(float(Time.get_ticks_msec()) * 0.008) * 0.25
+			draw_rect(Rect2(ipos - Vector2(1, 1), Vector2(18, 18)), Color(1.0, 0.82, 0.32, pulse_a), false, 1.5)
+			var prompt_txt: String = str(near_inter.get("prompt", "[E]"))
+			BuildSystem._draw_world_cursor_badge(self, ipos + Vector2(8, -10), prompt_txt, Color("#ffe699"), ThemeDB.fallback_font)
 
 	_draw_auto_aim_reticle()
 	BuildSystem.draw_build_ghost(self)
@@ -2134,13 +2431,15 @@ func _draw() -> void:
 
 func _draw_roof_and_chimney_smoke(layer: Node2D) -> void:
 	BuildSystem.draw_all_roofs(layer, self)
+	if is_instance_valid(player) and is_actor_occluded_by_grid(player.global_position, false):
+		player.draw_occluded_silhouette(layer, tex_hero_silhouette)
 
 func _draw_top_left_portrait_and_bars(ctrl: Control) -> void:
 	var s: SurvivalSystem = player.surv
 	ctrl.draw_rect(Rect2(Vector2(0, 0), Vector2(204, 56)), Color(0.07, 0.07, 0.08, 0.94), true)
 	ctrl.draw_rect(Rect2(Vector2(0, 0), Vector2(204, 56)), Color("#3b3733"), false, 1.5)
 	ctrl.draw_rect(Rect2(Vector2(6, 6), Vector2(44, 44)), Color("#161514"), true)
-	ctrl.draw_rect(Rect2(Vector2(6, 6), Vector2(44, 44)), Color("#524b44"), false, 1.5)
+	ctrl.draw_rect(Rect2(6, 6, 44, 44), Color("#524b44"), false, 1.5)
 	if player and player.tex_idle:
 		ctrl.draw_texture_rect(player.tex_idle, Rect2(Vector2(12, 8), Vector2(32, 40)), false)
 
@@ -2190,7 +2489,14 @@ func _draw_bottom_hotbar(hb: Control) -> void:
 	var font: Font = ThemeDB.fallback_font
 	var icon_sz := Vector2(30, 30)
 
-	BuildSystem.draw_build_banner(hb, self, start_x, total_w, font)
+	# Если активна всплывающая боевая подсказка (при первом запуске или первом выстреле крюка), выводим её над хотбаром
+	if combat_hint_timer > 0.0 and not build_mode_active:
+		var hint_rect := Rect2(Vector2(start_x - 8, -30), Vector2(total_w + 16, 26))
+		hb.draw_rect(hint_rect, Color(0.08, 0.11, 0.14, 0.94), true)
+		hb.draw_rect(hint_rect, Color("#d99136"), false, 1.5)
+		hb.draw_string(font, hint_rect.position + Vector2(10, 17), "💡 " + combat_hint_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("#ffe699"))
+	else:
+		BuildSystem.draw_build_banner(hb, self, start_x, total_w, font)
 
 	hb.draw_rect(Rect2(Vector2(start_x - 8, 0), Vector2(total_w + 16, BuildSystem.HOTBAR_HEIGHT)), Color(0.07, 0.07, 0.08, 0.94), true)
 	hb.draw_rect(Rect2(Vector2(start_x - 8, 0), Vector2(total_w + 16, BuildSystem.HOTBAR_HEIGHT)), Color("#3b3733"), false, 1.5)
@@ -2230,6 +2536,8 @@ func _draw_bottom_hotbar(hb: Control) -> void:
 		hb.draw_string(font, r.position + Vector2(5, 13), str((i + 1) % 10), HORIZONTAL_ALIGNMENT_LEFT, 16, 10, Color("#9a9186"))
 
 func _toggle_inventory_window() -> void:
+	if player.is_dead:
+		return
 	if settings_panel and settings_panel.visible:
 		settings_panel.visible = false
 	if inv_panel:
@@ -2238,6 +2546,8 @@ func _toggle_inventory_window() -> void:
 			_refresh_inventory_ui()
 
 func _toggle_settings_window() -> void:
+	if player.is_dead:
+		return
 	if inv_panel and inv_panel.visible:
 		inv_panel.visible = false
 	if settings_panel:
@@ -2564,6 +2874,8 @@ func _setup_reference_hud() -> void:
 	btn_build.text = "Стройка"
 	btn_build.focus_mode = Control.FOCUS_NONE
 	btn_build.pressed.connect(func():
+		if player.is_dead:
+			return
 		build_mode_active = not build_mode_active
 		BuildSystem.has_touch_preview = false
 		selected_block_id = int(build_hotbar_slots[selected_hotbar_slot])
@@ -2631,6 +2943,37 @@ func _setup_reference_hud() -> void:
 
 	_build_inventory_and_hotbar_modal(hud)
 	_build_settings_modal(hud)
+	_build_death_modal(hud)
+
+func _build_death_modal(hud: CanvasLayer) -> void:
+	death_panel = PanelContainer.new()
+	death_panel.visible = false
+	death_panel.custom_minimum_size = Vector2(380, 210)
+	death_panel.position = Vector2(386, 210)
+	death_panel.add_theme_stylebox_override("panel", _make_dark_card_style(Color("#b83b3b")))
+	hud.add_child(death_panel)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 14)
+	death_panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = "☠  ВЫ ПОГИБЛИ"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_color_override("font_color", Color("#e64848"))
+	vbox.add_child(title)
+
+	lbl_death_stats = Label.new()
+	lbl_death_stats.text = "Титан сокрушил вас."
+	lbl_death_stats.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl_death_stats.add_theme_color_override("font_color", Color("#d8d2c8"))
+	vbox.add_child(lbl_death_stats)
+
+	var btn_respawn := Button.new()
+	btn_respawn.custom_minimum_size = Vector2(240, 44)
+	btn_respawn.text = "↻  Возродиться в крепости"
+	btn_respawn.pressed.connect(func(): respawn_player())
+	vbox.add_child(btn_respawn)
 
 func _build_inventory_and_hotbar_modal(hud: CanvasLayer) -> void:
 	inv_panel = PanelContainer.new()
@@ -2732,8 +3075,8 @@ func _build_inventory_and_hotbar_modal(hud: CanvasLayer) -> void:
 func _build_settings_modal(hud: CanvasLayer) -> void:
 	settings_panel = PanelContainer.new()
 	settings_panel.visible = false
-	settings_panel.position = Vector2(256, 62)
-	settings_panel.custom_minimum_size = Vector2(580, 456)
+	settings_panel.position = Vector2(256, 52)
+	settings_panel.custom_minimum_size = Vector2(580, 476)
 	settings_panel.add_theme_stylebox_override("panel", _make_dark_card_style(Color("#524b44")))
 	hud.add_child(settings_panel)
 
@@ -2793,6 +3136,26 @@ func _build_settings_modal(hud: CanvasLayer) -> void:
 		if is_instance_valid(camera):
 			camera.zoom = Vector2(v, v)
 	)
+
+	var row_sil := HBoxContainer.new()
+	row_sil.add_theme_constant_override("separation", 10)
+	list.add_child(row_sil)
+	var lbl_sil := Label.new()
+	lbl_sil.custom_minimum_size = Vector2(245, 28)
+	lbl_sil.text = "Радиус контуров за стеной: %d кл." % int(round(silhouette_radius_cells))
+	lbl_sil.add_theme_color_override("font_color", Color("#d8d2c8"))
+	row_sil.add_child(lbl_sil)
+	var sld_sil := HSlider.new()
+	sld_sil.custom_minimum_size = Vector2(235, 28)
+	sld_sil.min_value = 3.0
+	sld_sil.max_value = 18.0
+	sld_sil.step = 1.0
+	sld_sil.value = silhouette_radius_cells
+	sld_sil.value_changed.connect(func(val: float):
+		silhouette_radius_cells = val
+		lbl_sil.text = "Радиус контуров за стеной: %d кл." % int(round(val))
+	)
+	row_sil.add_child(sld_sil)
 
 	var chk_float_joy := CheckButton.new()
 	chk_float_joy.text = "Плавающий центр джойстика (подстраивается под палец)"

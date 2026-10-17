@@ -13,6 +13,8 @@ var auto_aim_enabled: bool = true
 var demolish_mode: bool = false
 var current_aim_target_pos: Vector2 = Vector2.ZERO
 var has_valid_aim_target: bool = false
+var aim_target_in_range: bool = false
+var aim_target_kind: String = "none"
 
 var joy_touch_idx: int = -1
 var joy_default_center := Vector2(138.0, 496.0)
@@ -135,12 +137,11 @@ func trigger_btn_anim(key: String) -> void:
 	btn_anim[key] = 1.0
 	queue_redraw()
 
-# При выстреле крюком: если есть захваченный титан — стреляем в него, иначе ищем опору по направлению взгляда
 func get_aim_world_position(for_hook: bool = true) -> Vector2:
 	if world == null or not is_instance_valid(world.player):
 		return Vector2.ZERO
 	_update_auto_aim_target()
-	if auto_aim_enabled and has_valid_aim_target:
+	if auto_aim_enabled and has_valid_aim_target and aim_target_in_range:
 		return current_aim_target_pos
 
 	var p_pos: Vector2 = world.player.global_position
@@ -148,8 +149,8 @@ func get_aim_world_position(for_hook: bool = true) -> Vector2:
 	if base_dir.length() < 0.05:
 		base_dir = Vector2.DOWN
 
-	if for_hook and auto_aim_enabled and world.has_method("raycast_hook_anchor"):
-		var angles := [0.0, -0.20, 0.20, -0.42, 0.42]
+	if for_hook and world.has_method("raycast_hook_anchor"):
+		var angles := [0.0, -0.18, 0.18, -0.36, 0.36, -0.55, 0.55]
 		for ang in angles:
 			var test_dir: Vector2 = base_dir.rotated(ang)
 			var hit: Dictionary = world.raycast_hook_anchor(p_pos, test_dir, world.player.max_range_px)
@@ -158,7 +159,6 @@ func get_aim_world_position(for_hook: bool = true) -> Vector2:
 
 	return p_pos + base_dir * 160.0
 
-# Деревья (b_id == 8) не блокируют обзор прицелу в лесу, а глухие стены крепости — блокируют!
 func _has_clear_line_of_sight(from_pos: Vector2, to_pos: Vector2) -> bool:
 	if world == null:
 		return false
@@ -182,27 +182,49 @@ func _has_clear_line_of_sight(from_pos: Vector2, to_pos: Vector2) -> bool:
 		d += step_px
 	return true
 
-# Жёлтая метка автоприцела теперь наводится ТОЛЬКО на живых титанов (не прилипает к деревьям!)
+# ПУНКТ 3.4: Наглядный поиск цели для крюка и клинков (зеленый/желтый маркер в зоне досягаемости, серый/красный вне дальности)
 func _update_auto_aim_target() -> void:
 	has_valid_aim_target = false
+	aim_target_in_range = false
+	aim_target_kind = "none"
 	if world == null or not is_instance_valid(world.player):
 		return
 	var p_pos: Vector2 = world.player.global_position
 	var max_dist: float = world.player.max_range_px
 
+	# 1. Ищем ближайшего видимого титана (даже если он чуть дальше дальности крюка — чтобы показать красный маркер «ДАЛЕКО»)
 	var best_titan: Node2D = null
-	var best_d: float = max_dist
+	var best_d: float = max_dist * 1.35
 	if is_instance_valid(world.titans_layer):
 		for ch in world.titans_layer.get_children():
 			if ch is TitanEntity and ch.state != TitanEntity.State.DYING:
-				var d: float = p_pos.distance_to(ch.global_position)
+				var body_pt: Vector2 = ch.global_position + Vector2(0, -18.0 if ch.titan_type != "crawler" else -10.0)
+				var d: float = p_pos.distance_to(body_pt)
 				if d <= best_d and _has_clear_line_of_sight(p_pos, ch.global_position):
 					best_d = d
 					best_titan = ch
 
 	if best_titan != null:
-		current_aim_target_pos = best_titan.global_position
+		# Цепляемся к ближайшей части спрайта титана (торс/плечи/затылок)
+		var is_cr: bool = (best_titan.titan_type == "crawler")
+		var t_rect := Rect2(best_titan.global_position + Vector2(-16.0, -24.0 if is_cr else -48.0), Vector2(32.0, 22.0 if is_cr else 44.0))
+		current_aim_target_pos = p_pos.clamp(t_rect.position, t_rect.end)
 		has_valid_aim_target = true
+		aim_target_in_range = (p_pos.distance_to(current_aim_target_pos) <= max_dist)
+		aim_target_kind = "titan"
+		return
+
+	# 2. Если титанов рядом нет — подсвечиваем точку зацепа крюка по направлению взгляда (стена/дерево)
+	var base_dir: Vector2 = world.player.look_direction.normalized()
+	if base_dir.length() < 0.05:
+		base_dir = Vector2.DOWN
+	if world.has_method("raycast_hook_anchor"):
+		var hit: Dictionary = world.raycast_hook_anchor(p_pos, base_dir, max_dist)
+		if bool(hit.get("hit", false)):
+			current_aim_target_pos = hit.get("pos", p_pos + base_dir * 120.0)
+			has_valid_aim_target = true
+			aim_target_in_range = true
+			aim_target_kind = str(hit.get("kind", "wall"))
 
 func _process(delta: float) -> void:
 	_recalc_layout()
@@ -310,7 +332,7 @@ func _try_press_control_at(pt: Vector2, idx: int) -> bool:
 		trigger_btn_anim("attack")
 		if auto_aim_enabled:
 			_update_auto_aim_target()
-			if has_valid_aim_target and current_aim_target_pos.distance_to(world.player.global_position) <= 95.0:
+			if has_valid_aim_target and aim_target_kind == "titan" and current_aim_target_pos.distance_to(world.player.global_position) <= 95.0:
 				var dir_to_t: Vector2 = (current_aim_target_pos - world.player.global_position).normalized()
 				if dir_to_t.length() > 0.05:
 					world.player.look_direction = dir_to_t

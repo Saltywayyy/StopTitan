@@ -2,7 +2,6 @@
 class_name ArtLoader
 extends RefCounted
 
-# Включаем приоритет богатых многовариантных наборов над старыми 1-кадровыми PNG-заглушками
 static var PREFER_RICH_PROCEDURAL_VARIETY: bool = true
 
 static var ASSET_SPECS: Dictionary = {
@@ -66,8 +65,9 @@ static var ASSET_SPECS: Dictionary = {
 	"roof_wood": { "file": "roof_wood.png", "path": "res://art/roof_wood.png", "size": Vector2(16, 16), "frames": 8 }
 }
 
-# Ключи тайлов мира и деревьев, где процедурные вариации заменяют однотипные плоские 1-кадровые PNG
+# ПУНКТ 3.1: Добавлен "hero", чтобы новый 4-направленный серьёзный спрайт разведчика не затирался старым детским hero.png
 static var _FORCE_VARIETY_KEYS: Array[String] = [
+	"hero",
 	"ground_grass", "ground_dirt", "ground_dirt_edge", "ground_path",
 	"ground_wood_floor", "ground_garden", "floor_stone", "roof_wood",
 	"wall_stone", "autowall_wood", "autowall_brick", "autowall_stone",
